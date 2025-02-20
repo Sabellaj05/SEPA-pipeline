@@ -71,7 +71,6 @@ async def connect_to_source(URL: str, logger: logging.Logger) -> httpx.Response:
         return None
 
     return response
-    
 
 def parse_html(response: httpx.Response, logger: logging.Logger) -> str:
     """
@@ -196,7 +195,7 @@ async def download_data(download_link: str, logger: logging.Logger) -> bool:
         logger.error(f"Error downloading the file: {exc}")
         return False
     except Exception as e:
-        logger.erro(f"Error downloading the file: {e}")
+        logger.error(f"Error downloading the file: {e}")
         return False
 
 def main() -> None:
