@@ -1,0 +1,171 @@
+2025-02-20 01:01:55 - INFO - === Starting new scraping session ===
+2025-02-20 01:01:55 - INFO - Scraping URL: https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-20 01:01:55 - INFO - Attempting connection to https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-20 01:01:57 - INFO - Successfully connected to source
+2025-02-20 01:01:57 - INFO - Starting HTML parsing
+2025-02-20 01:01:57 - DEBUG - HTML Content: <!DOCTYPE html>
+<!--[if IE 7]> <html lang="es" class="ie ie7"> <![endif]-->
+<!--[if IE 8]> <html lang="es" class="ie ie8"> <![endif]-->
+<!--[if IE 9]> <html lang="es" class="ie9"> <![endif]-->
+<!--[if gt IE 8]><!-->
+<html lang="es">
+ <!--<![endif]-->
+ <head>
+  <!--[if lte ie 8]><script type="text/javascript" src="/fanstatic/vendor/:version:2019-12-02T16:58:12/html5.min.js"></script><![endif]-->
+  <link href="/fanstatic/vendor/:version:2019-12-02T16:58:12/select2/select2.css" rel="stylesheet" typ
+2025-02-20 01:01:57 - INFO - Found 9 package containers
+2025-02-20 01:01:57 - INFO - Found package info
+2025-02-20 01:01:57 - INFO - Found <p> tag
+2025-02-20 01:01:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:01:57 - INFO - Found package info
+2025-02-20 01:01:57 - INFO - Found <p> tag
+2025-02-20 01:01:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:01:57 - INFO - Found package info
+2025-02-20 01:01:57 - INFO - Found <p> tag
+2025-02-20 01:01:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:01:57 - INFO - Found package info
+2025-02-20 01:01:57 - INFO - Found <p> tag
+2025-02-20 01:01:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:01:57 - INFO - Found package info
+2025-02-20 01:01:57 - INFO - Found <p> tag
+2025-02-20 01:01:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:01:57 - INFO - Found package info
+2025-02-20 01:01:57 - INFO - Found <p> tag
+2025-02-20 01:01:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:01:57 - INFO - Found package info
+2025-02-20 01:01:57 - INFO - Found <p> tag
+2025-02-20 01:01:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:01:57 - INFO - Found package info
+2025-02-20 01:01:57 - INFO - Found <p> tag
+2025-02-20 01:01:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:01:57 - INFO - Found package info
+2025-02-20 01:01:57 - INFO - Found <p> tag
+2025-02-20 01:01:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:01:57 - INFO - No download link found for today's date
+2025-02-20 01:01:57 - INFO - === Scraping session finished ===
+2025-02-20 01:03:36 - INFO - === Starting new scraping session ===
+2025-02-20 01:03:36 - INFO - Scraping URL: https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-20 01:03:36 - INFO - Attempting connection to https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-20 01:03:38 - INFO - Successfully connected to source
+2025-02-20 01:03:38 - INFO - Starting HTML parsing
+2025-02-20 01:03:38 - DEBUG - HTML Content: <!DOCTYPE html>
+<!--[if IE 7]> <html lang="es" class="ie ie7"> <![endif]-->
+<!--[if IE 8]> <html lang="es" class="ie ie8"> <![endif]-->
+<!--[if IE 9]> <html lang="es" class="ie9"> <![endif]-->
+<!--[if gt IE 8]><!-->
+<html lang="es">
+ <!--<![endif]-->
+ <head>
+  <!--[if lte ie 8]><script type="text/javascript" src="/fanstatic/vendor/:version:2019-12-02T16:58:12/html5.min.js"></script><![endif]-->
+  <link href="/fanstatic/vendor/:version:2019-12-02T16:58:12/select2/select2.css" rel="stylesheet" typ
+2025-02-20 01:03:38 - INFO - Found 9 package containers
+2025-02-20 01:03:38 - INFO - Found package info
+2025-02-20 01:03:38 - INFO - Found <p> tag
+2025-02-20 01:03:38 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:03:38 - INFO - 'description' content: Precios SEPA Minoristas viernes, 2025-02-14
+2025-02-20 01:03:38 - INFO - Found package info
+2025-02-20 01:03:38 - INFO - Found <p> tag
+2025-02-20 01:03:38 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:03:38 - INFO - 'description' content: Precios SEPA Minoristas jueves, 2025-02-13
+2025-02-20 01:03:38 - INFO - Found package info
+2025-02-20 01:03:38 - INFO - Found <p> tag
+2025-02-20 01:03:38 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:03:38 - INFO - 'description' content: Precios SEPA Minoristas miercoles, 2025-02-19
+2025-02-20 01:03:38 - INFO - Found package info
+2025-02-20 01:03:38 - INFO - Found <p> tag
+2025-02-20 01:03:38 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:03:38 - INFO - 'description' content: Precios SEPA Minoristas martes, 2025-02-18
+2025-02-20 01:03:38 - INFO - Found package info
+2025-02-20 01:03:38 - INFO - Found <p> tag
+2025-02-20 01:03:38 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:03:38 - INFO - 'description' content: Precios SEPA Minoristas lunes, 2025-02-17
+2025-02-20 01:03:38 - INFO - Found package info
+2025-02-20 01:03:38 - INFO - Found <p> tag
+2025-02-20 01:03:38 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:03:38 - INFO - 'description' content: Precios SEPA Minoristas domingo, 2025-02-16
+2025-02-20 01:03:38 - INFO - Found package info
+2025-02-20 01:03:38 - INFO - Found <p> tag
+2025-02-20 01:03:38 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:03:38 - INFO - 'description' content: Precios SEPA Minoristas sabado, 2025-02-15
+2025-02-20 01:03:38 - INFO - Found package info
+2025-02-20 01:03:38 - INFO - Found <p> tag
+2025-02-20 01:03:38 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:03:38 - INFO - 'description' content: Excel para decodificar el nombre de la provincia a partir de su código.
+2025-02-20 01:03:38 - INFO - Found package info
+2025-02-20 01:03:38 - INFO - Found <p> tag
+2025-02-20 01:03:38 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:03:38 - INFO - 'description' content: Contiene un detalle de lo que se debería cargar en cada campo y metadata. El documento es el Anexo II de la Res. N° 678/2020 modificatoria de...
+2025-02-20 01:03:38 - INFO - No download link found for today's date
+2025-02-20 01:03:38 - INFO - === Scraping session finished ===
+2025-02-20 01:08:01 - INFO - === Starting new scraping session ===
+2025-02-20 01:08:01 - INFO - Scraping URL: https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-20 01:08:01 - INFO - Attempting connection to https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-20 01:08:03 - INFO - Successfully connected to source
+2025-02-20 01:08:03 - INFO - Starting HTML parsing
+2025-02-20 01:08:03 - DEBUG - HTML Content: <!DOCTYPE html>
+<!--[if IE 7]> <html lang="es" class="ie ie7"> <![endif]-->
+<!--[if IE 8]> <html lang="es" class="ie ie8"> <![endif]-->
+<!--[if IE 9]> <html lang="es" class="ie9"> <![endif]-->
+<!--[if gt IE 8]><!-->
+<html lang="es">
+ <!--<![endif]-->
+ <head>
+  <!--[if lte ie 8]><script type="text/javascript" src="/fanstatic/vendor/:version:2019-12-02T16:58:12/html5.min.js"></script><![endif]-->
+  <link href="/fanstatic/vendor/:version:2019-12-02T16:58:12/select2/select2.css" rel="stylesheet" typ
+2025-02-20 01:08:03 - INFO - Found 9 package containers
+2025-02-20 01:08:03 - INFO - 'description' content: Precios SEPA Minoristas viernes, 2025-02-14
+2025-02-20 01:08:03 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:08:03 - INFO - 'description' content: Precios SEPA Minoristas jueves, 2025-02-13
+2025-02-20 01:08:03 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:08:03 - INFO - 'description' content: Precios SEPA Minoristas miercoles, 2025-02-19
+2025-02-20 01:08:03 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:08:03 - INFO - 'description' content: Precios SEPA Minoristas martes, 2025-02-18
+2025-02-20 01:08:03 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:08:03 - INFO - 'description' content: Precios SEPA Minoristas lunes, 2025-02-17
+2025-02-20 01:08:03 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:08:03 - INFO - 'description' content: Precios SEPA Minoristas domingo, 2025-02-16
+2025-02-20 01:08:03 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:08:03 - INFO - 'description' content: Precios SEPA Minoristas sabado, 2025-02-15
+2025-02-20 01:08:03 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:08:03 - INFO - 'description' content: Excel para decodificar el nombre de la provincia a partir de su código.
+2025-02-20 01:08:03 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:08:03 - INFO - 'description' content: Contiene un detalle de lo que se debería cargar en cada campo y metadata. El documento es el Anexo II de la Res. N° 678/2020 modificatoria de...
+2025-02-20 01:08:03 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:08:03 - INFO - No download link found for today's date
+2025-02-20 01:08:03 - INFO - === Scraping session finished ===
+2025-02-20 01:59:54 - INFO - === Starting new scraping session ===
+2025-02-20 01:59:54 - INFO - Scraping URL: https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-20 01:59:54 - INFO - Attempting connection to https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-20 01:59:57 - INFO - Successfully connected to source
+2025-02-20 01:59:57 - INFO - Starting HTML parsing
+2025-02-20 01:59:57 - DEBUG - HTML Content: <!DOCTYPE html>
+<!--[if IE 7]> <html lang="es" class="ie ie7"> <![endif]-->
+<!--[if IE 8]> <html lang="es" class="ie ie8"> <![endif]-->
+<!--[if IE 9]> <html lang="es" class="ie9"> <![endif]-->
+<!--[if gt IE 8]><!-->
+<html lang="es">
+ <!--<![endif]-->
+ <head>
+  <!--[if lte ie 8]><script type="text/javascript" src="/fanstatic/vendor/:version:2019-12-02T16:58:12/html5.min.js"></script><![endif]-->
+  <link href="/fanstatic/vendor/:version:2019-12-02T16:58:12/select2/select2.css" rel="stylesheet" typ
+2025-02-20 01:59:57 - INFO - Found 9 package containers
+2025-02-20 01:59:57 - INFO - 'description' content: Precios SEPA Minoristas viernes, 2025-02-14
+2025-02-20 01:59:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:59:57 - INFO - 'description' content: Precios SEPA Minoristas jueves, 2025-02-13
+2025-02-20 01:59:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:59:57 - INFO - 'description' content: Precios SEPA Minoristas miercoles, 2025-02-19
+2025-02-20 01:59:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:59:57 - INFO - 'description' content: Precios SEPA Minoristas martes, 2025-02-18
+2025-02-20 01:59:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:59:57 - INFO - 'description' content: Precios SEPA Minoristas lunes, 2025-02-17
+2025-02-20 01:59:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:59:57 - INFO - 'description' content: Precios SEPA Minoristas domingo, 2025-02-16
+2025-02-20 01:59:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:59:57 - INFO - 'description' content: Precios SEPA Minoristas sabado, 2025-02-15
+2025-02-20 01:59:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:59:57 - INFO - 'description' content: Excel para decodificar el nombre de la provincia a partir de su código.
+2025-02-20 01:59:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:59:57 - INFO - 'description' content: Contiene un detalle de lo que se debería cargar en cada campo y metadata. El documento es el Anexo II de la Res. N° 678/2020 modificatoria de...
+2025-02-20 01:59:57 - INFO - Searching for packages matching date: 2025-02-20
+2025-02-20 01:59:57 - INFO - No download link found for today's date
+2025-02-20 01:59:57 - INFO - === Scraping session finished ===

@@ -1,0 +1,22 @@
+2025-02-19 23:55:18 - INFO - === Starting new scraping session ===
+2025-02-19 23:55:18 - INFO - Scraping URL: https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-19 23:55:18 - INFO - Attempting connection to https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-19 23:55:20 - INFO - Successfully connected to source
+2025-02-19 23:55:20 - INFO - Starting HTML parsing
+2025-02-19 23:55:20 - DEBUG - HTML Content: <!DOCTYPE html>
+<!--[if IE 7]> <html lang="es" class="ie ie7"> <![endif]-->
+<!--[if IE 8]> <html lang="es" class="ie ie8"> <![endif]-->
+<!--[if IE 9]> <html lang="es" class="ie9"> <![endif]-->
+<!--[if gt IE 8]><!-->
+<html lang="es">
+ <!--<![endif]-->
+ <head>
+  <!--[if lte ie 8]><script type="text/javascript" src="/fanstatic/vendor/:version:2019-12-02T16:58:12/html5.min.js"></script><![endif]-->
+  <link href="/fanstatic/vendor/:version:2019-12-02T16:58:12/select2/select2.css" rel="stylesheet" typ
+2025-02-19 23:55:20 - INFO - Found 9 package containers
+2025-02-19 23:55:20 - INFO - Searching for packages matching date: 2025-02-19
+2025-02-19 23:55:20 - INFO - Searching for packages matching date: 2025-02-19
+2025-02-19 23:55:20 - INFO - Searching for packages matching date: 2025-02-19
+2025-02-19 23:55:20 - INFO - Found matching package for date 2025-02-19
+2025-02-19 23:55:20 - INFO - Successfully found download link: https://datos.produccion.gob.ar/dataset/6f47ec76-d1ce-4e34-a7e1-621fe9b1d0b5/resource/1e92cd42-4f94-4071-a165-62c4cb2ce23c/download/sepa_miercoles.zip
+2025-02-19 23:55:20 - INFO - === Scraping session finished ===
