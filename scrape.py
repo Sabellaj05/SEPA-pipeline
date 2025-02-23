@@ -1,6 +1,7 @@
 """SEPA Precios data scraper"""
 
 from pathlib import Path
+from typing import Union
 import logging
 import asyncio
 import httpx
@@ -17,7 +18,11 @@ def logger_setup() -> logging.Logger:
     # create log dir if doesn't exists
     current_dir = Path(__file__).parent
     log_dir = current_dir / "logs"
-    log_dir.mkdir(exist_ok=True)
+    try:
+        log_dir.mkdir(exist_ok=True)
+    except OSError as e:
+        print(f"Could not create the directory: {e}")
+
     log_file_name = f"logging_{datetime.now().strftime('%Y-%m-%d')}.log"
     log_file_path = log_dir / log_file_name
     # Logging 
@@ -43,7 +48,7 @@ def logger_setup() -> logging.Logger:
 
     return logger
 
-async def connect_to_source(URL: str, logger: logging.Logger) -> httpx.Response:
+async def connect_to_source(URL: str, logger: logging.Logger) -> Union[httpx.Response, None]:
     """
     Handle connection to the page
     args:
@@ -72,7 +77,7 @@ async def connect_to_source(URL: str, logger: logging.Logger) -> httpx.Response:
 
     return response
 
-def parse_html(response: httpx.Response, logger: logging.Logger) -> str:
+def parse_html(response: httpx.Response, logger: logging.Logger) -> Union[str, None]:
     """
     Parses the html on the page and fetches the download link
     args:
@@ -168,7 +173,7 @@ async def download_data(download_link: str, logger: logging.Logger) -> bool:
         else:
             logger.warning(f"The file type is of type {extension} and it is not handled")
             return False
-        
+
         file_path = download_dir / file_name
         logger.info(f"Downloading file: {file_name} to : {file_path}")
         
@@ -185,7 +190,7 @@ async def download_data(download_link: str, logger: logging.Logger) -> bool:
                         async for chunk in response.aiter_bytes(chunk_size=chunk_size):
                             size = len(chunk)
                             f.write(chunk)
-                            logger.info("Downloading file in chunks of {chunk} bytes")
+                            # logger.info(f"Downloading file in chunks of {chunk} bytes")
                             pbar.update(size)
 
         logger.info("File downloaded successfully")
@@ -206,12 +211,15 @@ def main() -> None:
     logger.info(f"Scraping URL: {URL}")
     
     response = asyncio.run(connect_to_source(URL, logger))
-    
-    download_link = parse_html(response, logger)
-    if download_link:
-        logger.info(f"Successfully found download link: {download_link}")
+    if response is not None:
+        download_link = parse_html(response, logger)
+        if download_link:
+            logger.info(f"Successfully found download link: {download_link}")
+            asyncio.run(download_data(download_link,logger))
+        else:
+            logger.info("No download link found for today's date")
     else:
-        logger.info("No download link found for today's date")
+        logger.info("Cannot retrieve response from the URL")
     
     logger.info("=== Scraping session finished ===")
 
