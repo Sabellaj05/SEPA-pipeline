@@ -137,3 +137,37 @@ httpx.ConnectTimeout
 2025-02-23 17:17:24 - INFO - Downloading file: sepa_precios_2025-02-23.zip to : /home/don/Documents/repos-github/projects/SEPA-pipeline/data/sepa_precios_2025-02-23.zip
 2025-02-23 17:18:02 - INFO - File downloaded successfully
 2025-02-23 17:18:02 - INFO - === Scraping session finished ===
+2025-02-23 19:37:43 - INFO - === Starting new scraping session ===
+2025-02-23 19:37:43 - INFO - Scraping URL: https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-23 19:37:43 - INFO - Attempting connection to https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-23 19:37:45 - INFO - Successfully connected to source
+2025-02-23 19:37:45 - INFO - Starting HTML parsing
+2025-02-23 19:37:45 - DEBUG - HTML Content: <!DOCTYPE html>
+<!--[if IE 7]> <html lang="es" class="ie ie7"> <![endif]-->
+<!--[if IE 8]> <html lang="es" class="ie ie8"> <![endif]-->
+<!--[if IE 9]> <html lang="es" class="ie9"> <![endif]-->
+<!--[if gt IE 8]><!-->
+<html lang="es">
+ <!--<![endif]-->
+ <head>
+  <!--[if lte ie 8]><script type="text/javascript" src="/fanstatic/vendor/:version:2019-12-02T16:58:12/html5.min.js"></script><![endif]-->
+  <link href="/fanstatic/vendor/:version:2019-12-02T16:58:12/select2/select2.css" rel="stylesheet" typ
+2025-02-23 19:37:45 - INFO - Found 9 package containers
+2025-02-23 19:37:45 - INFO - 'description' content: Precios SEPA Minoristas viernes, 2025-02-21
+2025-02-23 19:37:45 - INFO - Searching for packages matching date: 2025-02-23
+2025-02-23 19:37:45 - INFO - 'description' content: Precios SEPA Minoristas jueves, 2025-02-20
+2025-02-23 19:37:45 - INFO - Searching for packages matching date: 2025-02-23
+2025-02-23 19:37:45 - INFO - 'description' content: Precios SEPA Minoristas miercoles, 2025-02-19
+2025-02-23 19:37:45 - INFO - Searching for packages matching date: 2025-02-23
+2025-02-23 19:37:45 - INFO - 'description' content: Precios SEPA Minoristas martes, 2025-02-18
+2025-02-23 19:37:45 - INFO - Searching for packages matching date: 2025-02-23
+2025-02-23 19:37:45 - INFO - 'description' content: Precios SEPA Minoristas lunes, 2025-02-17
+2025-02-23 19:37:45 - INFO - Searching for packages matching date: 2025-02-23
+2025-02-23 19:37:45 - INFO - 'description' content: Precios SEPA Minoristas domingo, 2025-02-23
+2025-02-23 19:37:45 - INFO - Searching for packages matching date: 2025-02-23
+2025-02-23 19:37:45 - INFO - Found matching package for date 2025-02-23
+2025-02-23 19:37:45 - INFO - Successfully found download link: https://datos.produccion.gob.ar/dataset/6f47ec76-d1ce-4e34-a7e1-621fe9b1d0b5/resource/f8e75128-515a-436e-bf8d-5c63a62f2005/download/sepa_domingo.zip
+2025-02-23 19:37:45 - INFO - The data to download is a zip file
+2025-02-23 19:37:45 - INFO - Downloading file: sepa_precios_2025-02-23.zip to : /home/don/Documents/repos-github/projects/SEPA-pipeline/data/sepa_precios_2025-02-23.zip
+2025-02-23 19:38:23 - INFO - File downloaded successfully
+2025-02-23 19:38:23 - INFO - === Scraping session finished ===

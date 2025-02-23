@@ -7,7 +7,26 @@ import asyncio
 import httpx
 from tqdm import tqdm
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+
+@dataclass
+class Fecha:
+    @property
+    def _now(self) -> datetime:
+        """ Returns current time in date in AR timezone"""
+        timezone_ar = timezone(timedelta(hours=-3))
+        return datetime.now(timezone_ar)
+
+    @property
+    def hoy(self) -> str:
+        """ Returns the current date in YYYY-MM-DD format """
+        return self._now.strftime("%Y-%m-%d")
+    
+    @property
+    def hoy_full(self) -> str:
+        """ Returns the current date in YYYY-MM-DD_HH:MM:SS format"""
+        return self._now.strftime("%Y-%m-%d_%H:%M:%S")
 
 def logger_setup() -> logging.Logger:
     """
@@ -21,7 +40,7 @@ def logger_setup() -> logging.Logger:
     try:
         log_dir.mkdir(exist_ok=True)
     except OSError as e:
-        print(f"Could not create the directory: {e}")
+        print(f"Could not create the logs directory: {e}")
 
     log_file_name = f"logging_{datetime.now().strftime('%Y-%m-%d')}.log"
     log_file_path = log_dir / log_file_name
@@ -118,7 +137,9 @@ def parse_html(response: httpx.Response, logger: logging.Logger) -> Union[str, N
             continue
         
 
-        hoy = datetime.today().strftime("%Y-%m-%d")
+        # hoy = datetime.today().strftime("%Y-%m-%d")
+        fecha = Fecha()
+        hoy = fecha.hoy
         logger.info(f"Searching for packages matching date: {hoy}")
 
         if hoy in description:
@@ -158,7 +179,10 @@ async def download_data(download_link: str, logger: logging.Logger) -> bool:
     try:
         # cretaes dowwnload directory
         download_dir = Path(__file__).parent / "data"
-        download_dir.mkdir(exist_ok=True)
+        try:
+            download_dir.mkdir(exist_ok=True)
+        except OSError as e:
+            logger.error(f"Could not create data directory, error: {e}")
 
         # extract the filename from the URL
         file_name = str(download_link.split('/')[-1]).lower()   # grab the last element in the split
