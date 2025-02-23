@@ -34,3 +34,106 @@
 2025-02-23 01:01:53 - INFO - Searching for packages matching date: 2025-02-23
 2025-02-23 01:01:53 - INFO - No download link found for today's date
 2025-02-23 01:01:53 - INFO - === Scraping session finished ===
+2025-02-23 17:06:29 - INFO - === Starting new scraping session ===
+2025-02-23 17:06:29 - INFO - Scraping URL: https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-23 17:06:29 - INFO - Attempting connection to https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-23 17:06:39 - ERROR - Error while requesting URL('https://datos.produccion.gob.ar/dataset/sepa-precios'): 
+Traceback (most recent call last):
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpcore/_async/connection.py", line 101, in handle_async_request
+    raise exc
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpcore/_async/connection.py", line 78, in handle_async_request
+    stream = await self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpcore/_async/connection.py", line 124, in _connect
+    stream = await self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpcore/_backends/auto.py", line 31, in connect_tcp
+    return await self._backend.connect_tcp(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpcore/_backends/anyio.py", line 113, in connect_tcp
+    with map_exceptions(exc_map):
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/miniconda3/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/don/Documents/repos-github/projects/SEPA-pipeline/scrape.py", line 63, in connect_to_source
+    response = await client.get(URL)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpx/_client.py", line 1768, in get
+    return await self.request(
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpx/_client.py", line 1540, in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/don/miniconda3/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/don/.cache/pypoetry/virtualenvs/sepa-pipeline-fCrr74NW-py3.12/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectTimeout
+2025-02-23 17:06:40 - INFO - Cannot retrieve response from the URL
+2025-02-23 17:06:40 - INFO - === Scraping session finished ===
+2025-02-23 17:17:22 - INFO - === Starting new scraping session ===
+2025-02-23 17:17:22 - INFO - Scraping URL: https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-23 17:17:22 - INFO - Attempting connection to https://datos.produccion.gob.ar/dataset/sepa-precios
+2025-02-23 17:17:24 - INFO - Successfully connected to source
+2025-02-23 17:17:24 - INFO - Starting HTML parsing
+2025-02-23 17:17:24 - DEBUG - HTML Content: <!DOCTYPE html>
+<!--[if IE 7]> <html lang="es" class="ie ie7"> <![endif]-->
+<!--[if IE 8]> <html lang="es" class="ie ie8"> <![endif]-->
+<!--[if IE 9]> <html lang="es" class="ie9"> <![endif]-->
+<!--[if gt IE 8]><!-->
+<html lang="es">
+ <!--<![endif]-->
+ <head>
+  <!--[if lte ie 8]><script type="text/javascript" src="/fanstatic/vendor/:version:2019-12-02T16:58:12/html5.min.js"></script><![endif]-->
+  <link href="/fanstatic/vendor/:version:2019-12-02T16:58:12/select2/select2.css" rel="stylesheet" typ
+2025-02-23 17:17:24 - INFO - Found 9 package containers
+2025-02-23 17:17:24 - INFO - 'description' content: Precios SEPA Minoristas viernes, 2025-02-21
+2025-02-23 17:17:24 - INFO - Searching for packages matching date: 2025-02-23
+2025-02-23 17:17:24 - INFO - 'description' content: Precios SEPA Minoristas jueves, 2025-02-20
+2025-02-23 17:17:24 - INFO - Searching for packages matching date: 2025-02-23
+2025-02-23 17:17:24 - INFO - 'description' content: Precios SEPA Minoristas miercoles, 2025-02-19
+2025-02-23 17:17:24 - INFO - Searching for packages matching date: 2025-02-23
+2025-02-23 17:17:24 - INFO - 'description' content: Precios SEPA Minoristas martes, 2025-02-18
+2025-02-23 17:17:24 - INFO - Searching for packages matching date: 2025-02-23
+2025-02-23 17:17:24 - INFO - 'description' content: Precios SEPA Minoristas lunes, 2025-02-17
+2025-02-23 17:17:24 - INFO - Searching for packages matching date: 2025-02-23
+2025-02-23 17:17:24 - INFO - 'description' content: Precios SEPA Minoristas domingo, 2025-02-23
+2025-02-23 17:17:24 - INFO - Searching for packages matching date: 2025-02-23
+2025-02-23 17:17:24 - INFO - Found matching package for date 2025-02-23
+2025-02-23 17:17:24 - INFO - Successfully found download link: https://datos.produccion.gob.ar/dataset/6f47ec76-d1ce-4e34-a7e1-621fe9b1d0b5/resource/f8e75128-515a-436e-bf8d-5c63a62f2005/download/sepa_domingo.zip
+2025-02-23 17:17:24 - INFO - The data to download is a zip file
+2025-02-23 17:17:24 - INFO - Downloading file: sepa_precios_2025-02-23.zip to : /home/don/Documents/repos-github/projects/SEPA-pipeline/data/sepa_precios_2025-02-23.zip
+2025-02-23 17:18:02 - INFO - File downloaded successfully
+2025-02-23 17:18:02 - INFO - === Scraping session finished ===
