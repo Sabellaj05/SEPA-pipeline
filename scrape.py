@@ -1,7 +1,7 @@
 """SEPA Precios data scraper"""
 
 from pathlib import Path
-from typing import Union
+from typing import Optional
 import logging
 import asyncio
 import httpx
@@ -67,7 +67,7 @@ def logger_setup() -> logging.Logger:
 
     return logger
 
-async def connect_to_source(URL: str, logger: logging.Logger) -> Union[httpx.Response, None]:
+async def connect_to_source(URL: str, logger: logging.Logger) -> Optional[httpx.Response]:
     """
     Handle connection to the page
     args:
@@ -96,7 +96,7 @@ async def connect_to_source(URL: str, logger: logging.Logger) -> Union[httpx.Res
 
     return response
 
-def parse_html(response: httpx.Response, logger: logging.Logger) -> Union[str, None]:
+def parse_html(response: httpx.Response, logger: logging.Logger) -> Optional[str]:
     """
     Parses the html on the page and fetches the download link
     args:
