@@ -9,7 +9,7 @@ def logger_setup(name) -> logging.Logger:
         logging.Logger: Logger object
     """
     # create log dir if doesn't exists
-    current_dir = Path(__file__).parent
+    current_dir = Path(__file__).parent.parent
     log_dir = current_dir / "logs"
     try:
         log_dir.mkdir(exist_ok=True)
