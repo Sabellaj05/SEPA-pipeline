@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from typing import Optional
-import logging
+from utils.logger import logger
 import asyncio
 import httpx
 from tqdm import tqdm
@@ -28,51 +28,12 @@ class Fecha:
         """ Returns the current date in YYYY-MM-DD_HH:MM:SS format"""
         return self._now.strftime("%Y-%m-%d_%H:%M:%S")
 
-def logger_setup() -> logging.Logger:
-    """
-    Setup logging configuration
-    returns:
-        logging.Logger: Logger object
-    """
-    # create log dir if doesn't exists
-    current_dir = Path(__file__).parent
-    log_dir = current_dir / "logs"
-    try:
-        log_dir.mkdir(exist_ok=True)
-    except OSError as e:
-        print(f"Could not create the logs directory: {e}")
 
-    log_file_name = f"logging_{datetime.now().strftime('%Y-%m-%d')}.log"
-    log_file_path = log_dir / log_file_name
-    # Logging 
-    # create the logger
-    logger = logging.getLogger("mylog")
-    logger.setLevel(logging.DEBUG)
-    file_handler = logging.FileHandler(log_file_path)
-    ## file handler, only INFO and up (WARNING, ERROR, CRITICAL)
-    ## file_handler.setLevel(logging.INFO)
-    # file haldner set to DEBUG
-    file_handler.setLevel(logging.DEBUG)
-    # console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG)
-    # format the logger, (time format, log level, message itself)
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", "%Y-%m-%d %H:%M:%S")
-    # attach format to handler
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-    # Add the handlers to the logger
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-
-    return logger
-
-async def connect_to_source(URL: str, logger: logging.Logger) -> Optional[httpx.Response]:
+async def connect_to_source(URL: str) -> Optional[httpx.Response]:
     """
     Handle connection to the page
     args:
         URL: url of the page
-        logger: a logging instance
     returns:
         httpx.Response: A response object from the page
     """
@@ -96,13 +57,13 @@ async def connect_to_source(URL: str, logger: logging.Logger) -> Optional[httpx.
 
     return response
 
-def parse_html(response: httpx.Response, logger: logging.Logger) -> Optional[str]:
+def parse_html(response: httpx.Response) -> Optional[str]:
     """
     Parses the html on the page and fetches the download link
     args:
         response: Response from the connection function
     returns:
-        str:The download link
+        str: The download link
     """
     try:
         logger.info("Starting HTML parsing")
@@ -162,12 +123,11 @@ def parse_html(response: httpx.Response, logger: logging.Logger) -> Optional[str
     return None
 
 
-async def download_data(download_link: str, logger: logging.Logger) -> bool:
+async def download_data(download_link: str) -> bool:
     """
     Downloads and extract the data from the provided link
     args:
         download_link: URL to download the files
-        logger: Logger instance
     returns:
         bool: True if download was successful, False otherwise
     """
@@ -228,18 +188,17 @@ async def download_data(download_link: str, logger: logging.Logger) -> bool:
         return False
 
 def main() -> None:
-    logger = logger_setup()
 
     URL = "https://datos.produccion.gob.ar/dataset/sepa-precios"
     logger.info("=== Starting new scraping session ===")
     logger.info(f"Scraping URL: {URL}")
     
-    response = asyncio.run(connect_to_source(URL, logger))
+    response = asyncio.run(connect_to_source(URL))
     if response is not None:
-        download_link = parse_html(response, logger)
+        download_link = parse_html(response)
         if download_link:
             logger.info(f"Successfully found download link: {download_link}")
-            asyncio.run(download_data(download_link,logger))
+            asyncio.run(download_data(download_link))
         else:
             logger.info("No download link found for today's date")
     else:
