@@ -3,30 +3,13 @@
 from pathlib import Path
 from typing import Optional
 from utils.logger import logger
+from utils.fecha import Fecha
 import asyncio
 import httpx
 from tqdm import tqdm
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
-
-@dataclass
-class Fecha:
-    @property
-    def _now(self) -> datetime:
-        """ Returns current time in date in AR timezone"""
-        timezone_ar = timezone(timedelta(hours=-3))
-        return datetime.now(timezone_ar)
-
-    @property
-    def hoy(self) -> str:
-        """ Returns the current date in YYYY-MM-DD format """
-        return self._now.strftime("%Y-%m-%d")
-    
-    @property
-    def hoy_full(self) -> str:
-        """ Returns the current date in YYYY-MM-DD_HH:MM:SS format"""
-        return self._now.strftime("%Y-%m-%d_%H:%M:%S")
 
 
 async def connect_to_source(URL: str) -> Optional[httpx.Response]:
@@ -35,7 +18,7 @@ async def connect_to_source(URL: str) -> Optional[httpx.Response]:
     args:
         URL: url of the page
     returns:
-        httpx.Response: A response object from the page
+        Optional[httpx.Response]: A response object from the page or None if connection failed
     """
     logger.info(f"Attempting connection to {URL}")
     try:
@@ -43,6 +26,7 @@ async def connect_to_source(URL: str) -> Optional[httpx.Response]:
             response = await client.get(URL)
             response.raise_for_status()
             logger.info("Successfully connected to source")
+            return response
     except httpx.RequestError as exc:
         logger.error(
             f"Error while requesting {exc.request.url!r}: {exc}", exc_info=True
@@ -55,15 +39,15 @@ async def connect_to_source(URL: str) -> Optional[httpx.Response]:
         )
         return None
 
-    return response
 
-def parse_html(response: httpx.Response) -> Optional[str]:
+def parse_html(response: httpx.Response, ar_date) -> Optional[str]:
     """
     Parses the html on the page and fetches the download link
     args:
         response: Response from the connection function
+        ar_date: AR date in (YYYY-MM-DD) format
     returns:
-        str: The download link
+        Optional[str]: The download link or None if not found
     """
     try:
         logger.info("Starting HTML parsing")
@@ -96,11 +80,8 @@ def parse_html(response: httpx.Response) -> Optional[str]:
         except Exception as e:
             logger.error(f"Error extracting package info from 'pkg-container' {e}", exc_info=True)
             continue
-        
 
-        # hoy = datetime.today().strftime("%Y-%m-%d")
-        fecha = Fecha()
-        hoy = fecha.hoy
+        hoy = ar_date 
         logger.info(f"Searching for packages matching date: {hoy}")
 
         if hoy in description:
@@ -123,11 +104,12 @@ def parse_html(response: httpx.Response) -> Optional[str]:
     return None
 
 
-async def download_data(download_link: str) -> bool:
+async def download_data(download_link: str, fecha: Fecha) -> bool:
     """
     Downloads and extract the data from the provided link
     args:
         download_link: URL to download the files
+        fecha: AR date in (YYYY-MM-DD) format
     returns:
         bool: True if download was successful, False otherwise
     """
@@ -137,24 +119,25 @@ async def download_data(download_link: str) -> bool:
         return False
     
     try:
-        # cretaes dowwnload directory
+        # Cretaes dowwnload directory
         download_dir = Path(__file__).parent / "data"
         try:
             download_dir.mkdir(exist_ok=True)
         except OSError as e:
             logger.error(f"Could not create data directory, error: {e}")
 
-        # extract the filename from the URL
+        # Extract the filename from the URL
         file_name = str(download_link.split('/')[-1]).lower()   # grab the last element in the split
-        extension = Path(file_name).suffix         # grab the file type
-        # we know is a zip file
+        today_date = fecha.hoy
+        # We know is a zip file
         if file_name.endswith('.zip'):
-            file_name = f"sepa_precios_{datetime.now().strftime('%Y-%m-%d')}.zip"
+            file_name = f"sepa_precios_{today_date}.zip"
             logger.info(f"The data to download is a zip file")
         elif file_name.endswith('.csv'):
-            file_name = f"sepa_precios_{datetime.now().strftime('%Y-%m-%d')}.csv"
+            file_name = f"sepa_precios_{today_date}.csv"
             logger.info(f"The data to download is a csv file")
         else:
+            extension = Path(file_name).suffix         # grab the file type
             logger.warning(f"The file type is of type {extension} and it is not handled")
             return False
 
@@ -187,24 +170,45 @@ async def download_data(download_link: str) -> bool:
         logger.error(f"Error downloading the file: {e}")
         return False
 
+async def scrape_async() -> bool:
+    """
+    Main async function that orchestrates the scraping process
+    
+    returns:
+        bool: True if scraping and download were successful
+    """
+    URL = "https://datos.produccion.gob.ar/dataset/sepa-precios"
+    fecha = Fecha()
+    ar_date = fecha.hoy
+    
+    # Connect to source system
+    response = await connect_to_source(URL)
+    if not response:
+        logger.error("Failed to connect to source")
+        return False
+        
+    # Parse HTML and get download link
+    download_link = parse_html(response, ar_date)
+    if not download_link:
+        logger.info(f"No download link found for date: {ar_date}")
+        return False
+        
+    # Download the data
+    logger.info(f"Found download link: {download_link}")
+    downloaded_data = await download_data(download_link, fecha)
+    return downloaded_data
+
 def main() -> None:
 
-    URL = "https://datos.produccion.gob.ar/dataset/sepa-precios"
+    """
+    Main entry point for the script
+    """
     logger.info("=== Starting new scraping session ===")
-    logger.info(f"Scraping URL: {URL}")
     
-    response = asyncio.run(connect_to_source(URL))
-    if response is not None:
-        download_link = parse_html(response)
-        if download_link:
-            logger.info(f"Successfully found download link: {download_link}")
-            asyncio.run(download_data(download_link))
-        else:
-            logger.info("No download link found for today's date")
-    else:
-        logger.info("Cannot retrieve response from the URL")
+    success = asyncio.run(scrape_async())
     
-    logger.info("=== Scraping session finished ===")
+    status = "successfully" if success else "unsuccessfully"
+    logger.info(f"=== Scraping session completed {status} ===")
 
 if __name__ == "__main__":
     main()
