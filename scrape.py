@@ -8,9 +8,6 @@ import asyncio
 import httpx
 from tqdm import tqdm
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta, timezone
-from dataclasses import dataclass
-
 
 async def connect_to_source(URL: str) -> Optional[httpx.Response]:
     """
