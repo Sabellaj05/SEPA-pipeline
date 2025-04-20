@@ -8,7 +8,10 @@ import asyncio
 import httpx
 from tqdm import tqdm
 from bs4 import BeautifulSoup
+from tenacity import retry, stop_after_attempt, wait_exponential
 
+# retry logic
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def connect_to_source(URL: str) -> Optional[httpx.Response]:
     """
     Handle connection to the page
@@ -50,7 +53,10 @@ def parse_html(response: httpx.Response, ar_date) -> Optional[str]:
         logger.info("Starting HTML parsing")
         soup = BeautifulSoup(response.text, "html.parser")
         logger.debug(f"HTML Content: {soup.prettify()[:500]}")
-        pkg_containers = soup.find_all("div", class_="pkg-container")
+        
+        # pkg_containers = soup.find_all("div", class_="pkg-container")
+        # css selectors are more reliable
+        pkg_containers = soup.select("div.pkg-container")
         logger.info(f"Found {len(pkg_containers)} package containers")
         if not pkg_containers:
             logger.warning("No 'pkg-container' elements in the HTML")
@@ -150,7 +156,7 @@ async def download_data(download_link: str, fecha: Fecha) -> bool:
                 chunk_size = 8192
 
                 with tqdm(total=total, unit='iB', unit_scale=True, desc=file_name) as pbar:
-                    with open(file_path, 'wb') as f:
+                    with open(file_path, 'wb') as f: # write binary
                         async for chunk in response.aiter_bytes(chunk_size=chunk_size):
                             size = len(chunk)
                             f.write(chunk)
