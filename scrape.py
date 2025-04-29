@@ -124,10 +124,7 @@ async def download_data(download_link: str, fecha: Fecha) -> bool:
     try:
         # Cretaes dowwnload directory
         download_dir = Path(__file__).parent / "data"
-        try:
-            download_dir.mkdir(exist_ok=True)
-        except OSError as e:
-            logger.error(f"Could not create data directory, error: {e}")
+        download_dir.mkdir(exist_ok=True)
 
         # Extract the filename from the URL
         file_name = str(download_link.split('/')[-1]).lower()   # grab the last element in the split
