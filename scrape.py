@@ -40,12 +40,12 @@ async def connect_to_source(URL: str) -> Optional[httpx.Response]:
         return None
 
 
-def parse_html(response: httpx.Response, ar_date) -> Optional[str]:
+def parse_html(response: httpx.Response, hoy) -> Optional[str]:
     """
     Parses the html on the page and fetches the download link
     args:
         response: Response from the connection function
-        ar_date: AR date in (YYYY-MM-DD) format
+        hoy: AR date in (YYYY-MM-DD) format for today's date
     returns:
         Optional[str]: The download link or None if not found
     """
@@ -84,7 +84,6 @@ def parse_html(response: httpx.Response, ar_date) -> Optional[str]:
             logger.error(f"Error extracting package info from 'pkg-container' {e}", exc_info=True)
             continue
 
-        hoy = ar_date 
         logger.info(f"Searching for packages matching date: {hoy}")
 
         if hoy in description:
@@ -179,7 +178,7 @@ async def scrape_async() -> bool:
     """
     URL = "https://datos.produccion.gob.ar/dataset/sepa-precios"
     fecha = Fecha()
-    ar_date = fecha.hoy
+    ar_date_hoy = fecha.hoy
     
     # Connect to source system
     response = await connect_to_source(URL)
@@ -188,9 +187,9 @@ async def scrape_async() -> bool:
         return False
         
     # Parse HTML and get download link
-    download_link = parse_html(response, ar_date)
+    download_link = parse_html(response, ar_date_hoy)
     if not download_link:
-        logger.info(f"No download link found for date: {ar_date}")
+        logger.info(f"No download link found for date: {ar_date_hoy}")
         return False
         
     # Download the data
