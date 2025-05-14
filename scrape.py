@@ -10,6 +10,7 @@ from tqdm import tqdm
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+
 # retry logic
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def connect_to_source(URL: str) -> Optional[httpx.Response]:
@@ -24,6 +25,7 @@ async def connect_to_source(URL: str) -> Optional[httpx.Response]:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.get(URL)
+
             response.raise_for_status()
             logger.info("Successfully connected to source")
             return response
@@ -35,12 +37,12 @@ async def connect_to_source(URL: str) -> Optional[httpx.Response]:
     except httpx.HTTPStatusError as exc:
         logger.error(
             f"Error response {exc.response.status_code} while requesting {exc.request.url!r}",
-            exc_info=True
+            exc_info=True,
         )
         return None
 
 
-def parse_html(response: httpx.Response, hoy) -> Optional[str]:
+def parse_html(response: httpx.Response, hoy: str) -> Optional[str]:
     """
     Parses the html on the page and fetches the download link
     args:
@@ -53,7 +55,7 @@ def parse_html(response: httpx.Response, hoy) -> Optional[str]:
         logger.info("Starting HTML parsing")
         soup = BeautifulSoup(response.text, "html.parser")
         logger.debug(f"HTML Content: {soup.prettify()[:500]}")
-        
+
         # pkg_containers = soup.find_all("div", class_="pkg-container")
         # css selectors are more reliable
         pkg_containers = soup.select("div.pkg-container")
@@ -67,7 +69,7 @@ def parse_html(response: httpx.Response, hoy) -> Optional[str]:
     except Exception as e:
         logger.error(f"Error parsing 'pkg-containers' in HTML {e}", exc_info=True)
         return None
-    
+
     for pkg in pkg_containers:
         try:
             package_info = pkg.find("div", class_="package-info")
@@ -81,7 +83,9 @@ def parse_html(response: httpx.Response, hoy) -> Optional[str]:
             description = description_tag.get_text(strip=True)
             logger.info(f"'description' content: {description}")
         except Exception as e:
-            logger.error(f"Error extracting package info from 'pkg-container' {e}", exc_info=True)
+            logger.error(
+                f"Error extracting package info from 'pkg-container' {e}", exc_info=True
+            )
             continue
 
         logger.info(f"Searching for packages matching date: {hoy}")
@@ -95,7 +99,10 @@ def parse_html(response: httpx.Response, hoy) -> Optional[str]:
                         download_link = str(a["href"])
                         break
             except Exception as e:
-                logger.error(f"Error extracting the download link from 'description' {e}", exc_info=True)
+                logger.error(
+                    f"Error extracting the download link from 'description' {e}",
+                    exc_info=True,
+                )
 
             if download_link:
                 logger.info(f"Found matching package for date {hoy}")
@@ -119,40 +126,46 @@ async def download_data(download_link: str, fecha: Fecha) -> bool:
     if not download_link:
         logger.error("No download link provided")
         return False
-    
+
     try:
         # Cretaes dowwnload directory
         download_dir = Path(__file__).parent / "data"
         download_dir.mkdir(exist_ok=True)
 
         # Extract the filename from the URL
-        file_name = str(download_link.split('/')[-1]).lower()   # grab the last element in the split
+        file_name = str(
+            download_link.split("/")[-1]
+        ).lower()  # grab the last element in the split
         today_date = fecha.hoy
         # We know is a zip file
-        if file_name.endswith('.zip'):
+        if file_name.endswith(".zip"):
             file_name = f"sepa_precios_{today_date}.zip"
             logger.info(f"The data to download is a zip file")
-        elif file_name.endswith('.csv'):
+        elif file_name.endswith(".csv"):
             file_name = f"sepa_precios_{today_date}.csv"
             logger.info(f"The data to download is a csv file")
         else:
-            extension = Path(file_name).suffix         # grab the file type
-            logger.warning(f"The file type is of type {extension} and it is not handled")
+            extension = Path(file_name).suffix  # grab the file type
+            logger.warning(
+                f"The file type is of type {extension} and it is not handled"
+            )
             return False
 
         file_path = download_dir / file_name
         logger.info(f"Downloading file: {file_name} to : {file_path}")
-        
+
         # download the file in a stream manner, good for large files
         async with httpx.AsyncClient() as client:
-            async with client.stream('GET', download_link) as response:
+            async with client.stream("GET", download_link) as response:
                 response.raise_for_status()
 
                 total = int(response.headers.get("content-length", 0))
                 chunk_size = 8192
 
-                with tqdm(total=total, unit='iB', unit_scale=True, desc=file_name) as pbar:
-                    with open(file_path, 'wb') as f: # write binary
+                with tqdm(
+                    total=total, unit="iB", unit_scale=True, desc=file_name
+                ) as pbar:
+                    with open(file_path, "wb") as f:  # write binary
                         async for chunk in response.aiter_bytes(chunk_size=chunk_size):
                             size = len(chunk)
                             f.write(chunk)
@@ -163,51 +176,53 @@ async def download_data(download_link: str, fecha: Fecha) -> bool:
         return True
 
     except httpx.RequestError as exc:
-        logger.error(f"Error downloading the file: {exc}")
+        logger.error(f"Request downloading the file: {exc}")
         return False
     except Exception as e:
-        logger.error(f"Error downloading the file: {e}")
+        logger.error(f"Unexpected Error downloading the file: {e}")
         return False
+
 
 async def scrape_async() -> bool:
     """
     Main async function that orchestrates the scraping process
-    
+
     returns:
         bool: True if scraping and download were successful
     """
     URL = "https://datos.produccion.gob.ar/dataset/sepa-precios"
     fecha = Fecha()
     ar_date_hoy = fecha.hoy
-    
+
     # Connect to source system
     response = await connect_to_source(URL)
     if not response:
         logger.error("Failed to connect to source")
         return False
-        
+
     # Parse HTML and get download link
     download_link = parse_html(response, ar_date_hoy)
     if not download_link:
         logger.info(f"No download link found for date: {ar_date_hoy}")
         return False
-        
+
     # Download the data
     logger.info(f"Found download link: {download_link}")
     downloaded_data = await download_data(download_link, fecha)
     return downloaded_data
 
-def main() -> None:
 
+def main() -> None:
     """
     Main entry point for the script
     """
     logger.info("=== Starting new scraping session ===")
-    
+
     success = asyncio.run(scrape_async())
-    
+
     status = "successfully" if success else "unsuccessfully"
     logger.info(f"=== Scraping session completed {status} ===")
+
 
 if __name__ == "__main__":
     main()
