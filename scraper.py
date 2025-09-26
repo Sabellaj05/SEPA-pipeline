@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Optional
 from utils.logger import logger
 from utils.fecha import Fecha
-import asyncio
 import httpx
 from tqdm import tqdm
 from bs4 import BeautifulSoup
@@ -146,7 +145,7 @@ async def download_data(download_link: str, fecha: Fecha) -> bool:
             logger.info(f"The data to download is a csv file")
         else:
             extension = Path(file_name).suffix  # grab the file type
-            logger.warning(
+            logger.error(
                 f"The file type is of type {extension} and it is not handled"
             )
             return False
@@ -183,14 +182,13 @@ async def download_data(download_link: str, fecha: Fecha) -> bool:
         return False
 
 
-async def scrape_async() -> bool:
+async def scrape_async(URL: str) -> bool:
     """
     Main async function that orchestrates the scraping process
 
     returns:
         bool: True if scraping and download were successful
     """
-    URL = "https://datos.produccion.gob.ar/dataset/sepa-precios"
     fecha = Fecha()
     ar_date_hoy = fecha.hoy
 
@@ -202,27 +200,29 @@ async def scrape_async() -> bool:
 
     # Parse HTML and get download link
     download_link = parse_html(response, ar_date_hoy)
-    if not download_link:
+
+    if download_link is None:
         logger.info(f"No download link found for date: {ar_date_hoy}")
         return False
+    else:
+        # Download the data
+        logger.info(f"Found download link: {download_link}")
+        downloaded_data = await download_data(download_link, fecha)
 
-    # Download the data
-    logger.info(f"Found download link: {download_link}")
-    downloaded_data = await download_data(download_link, fecha)
     return downloaded_data
 
 
-def main() -> None:
-    """
-    Main entry point for the script
-    """
-    logger.info("=== Starting new scraping session ===")
-
-    success = asyncio.run(scrape_async())
-
-    status = "successfully" if success else "unsuccessfully"
-    logger.info(f"=== Scraping session completed {status} ===")
-
-
-if __name__ == "__main__":
-    main()
+# def main() -> None:
+#     """
+#     Main entry point for the script
+#     """
+#     logger.info("=== Starting new scraping session ===")
+#
+#     success = asyncio.run(scrape_async())
+#
+#     status = "successfully" if success else "unsuccessfully"
+#     logger.info(f"=== Scraping session completed {status} ===")
+#
+#
+# if __name__ == "__main__":
+#     main()
