@@ -1,6 +1,18 @@
 # SEPA-pipeline
 data pipeline project for SEPA prices
 
+## Run the project
+
+```bash
+# download dependencies and creates the venv
+uv sync
+# activate
+source .venv/bin/activate
+# install editable mode
+uv pip install -e .
+# run
+uv run python -m src.sepa_pipeline.main
+```
 
 TODO:
 

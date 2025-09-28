@@ -3,7 +3,7 @@ from sepa_pipeline.scraper import SepaScraper
 from sepa_pipeline.utils.logger import logger
 
 
-URL = "https://www.se.gob.ar/datosupstream/procesamiento-de-gas/"
+URL = "https://datos.produccion.gob.ar/dataset/sepa-precios"
 DATA_DIR = "data"
 
 
