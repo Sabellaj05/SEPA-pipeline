@@ -9,8 +9,9 @@ def logger_setup(name) -> logging.Logger:
         logging.Logger: Logger object
     """
     # create log dir if doesn't exists
-    current_dir = Path(__file__).parent.parent
-    log_dir = current_dir / "logs"
+    # Navigate to project root (two levels up from utils/)
+    project_root = Path(__file__).parent.parent.parent
+    log_dir = project_root / "logs"
     try:
         log_dir.mkdir(exist_ok=True)
     except OSError as e:

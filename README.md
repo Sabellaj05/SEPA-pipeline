@@ -11,7 +11,7 @@ source .venv/bin/activate
 # install editable mode
 uv pip install -e .
 # run
-uv run python -m src.sepa_pipeline.main
+uv run python -m sepa_pipeline.main
 ```
 
 TODO:
