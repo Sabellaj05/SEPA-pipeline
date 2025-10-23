@@ -2,13 +2,14 @@
 
 from pathlib import Path
 from typing import Optional
+
 import httpx
-from tqdm import tqdm
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
+from tqdm import tqdm
 
-from .utils.logger import logger
 from .utils.fecha import Fecha
+from .utils.logger import logger
 
 
 class SepaScraper:
@@ -27,7 +28,9 @@ class SepaScraper:
         self.fecha = Fecha()
         self.client = httpx.AsyncClient(timeout=20)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    @retry(
+        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10)
+    )
     async def _connect_to_source(self) -> Optional[httpx.Response]:
         """
         Handles connection to the page.
@@ -43,7 +46,8 @@ class SepaScraper:
             return None
         except httpx.HTTPStatusError as exc:
             logger.error(
-                f"Error response {exc.response.status_code} while requesting {exc.request.url!r}"
+                f"Error response {exc.response.status_code} while requesting "
+                f"{exc.request.url!r}"
             )
             return None
 
@@ -71,22 +75,28 @@ class SepaScraper:
             if not package_info:
                 continue
 
-            description_tag = package_info.find("p")
+            description_tag = package_info.find("p")  # type: ignore
             if not description_tag:
                 continue
 
             description = description_tag.get_text(strip=True)
             if today_str in description:
                 logger.info(f"Found matching package for date {today_str}")
-                download_button = pkg.select_one('a:has(button:contains("DESCARGAR"))')
-                if download_button and download_button.get("href"):
-                    download_link = str(download_button["href"])
+                download_button = pkg.find("a")
+                if download_button:
+                    button = download_button.find("button")  # type: ignore
+                    if button and "DESCARGAR" in button.get_text():
+                        pass  # Found the right button
+                    else:
+                        download_button = None
+                if download_button and download_button.get("href"):  # type: ignore
+                    download_link = str(download_button["href"])  # type: ignore
                     logger.info(f"Found download link: {download_link}")
                     return download_link
                 else:
                     logger.warning("Matching package found, but no download link.")
                     return None
-        
+
         logger.info(f"No package found for date: {today_str}")
         return None
 
@@ -100,18 +110,20 @@ class SepaScraper:
 
         try:
             self.data_dir.mkdir(exist_ok=True)
-            
+
             today_date = self.fecha.hoy
             file_name = f"sepa_precios_{today_date}.zip"
             file_path = self.data_dir / file_name
-            
+
             logger.info(f"Downloading file: {file_name} to : {file_path}")
 
             async with self.client.stream("GET", download_link) as response:
                 response.raise_for_status()
                 total = int(response.headers.get("content-length", 0))
-                
-                with tqdm(total=total, unit="iB", unit_scale=True, desc=file_name) as pbar:
+
+                with tqdm(
+                    total=total, unit="iB", unit_scale=True, desc=file_name
+                ) as pbar:
                     with open(file_path, "wb") as f:
                         async for chunk in response.aiter_bytes():
                             f.write(chunk)
