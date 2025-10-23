@@ -97,12 +97,12 @@ class SepaScraper:
                 href = link.get("href", "")
                 
                 # Check if this link contains the target filename
-                if target_filename in href.lower():
+                if target_filename in str(href).lower():
                     logger.info(f"Found matching download link!")
                     logger.info(f"Link: {href}")
                     
                     # The link should already be absolute from the CKAN dataset page
-                    return href
+                    return str(href)
             
             logger.warning(f"No download link found for {target_filename}")
             logger.debug(f"Searched all {len(all_links)} links")
