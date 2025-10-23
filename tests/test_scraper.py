@@ -57,42 +57,38 @@ class TestSepaScraper:
         """Test successful HTML parsing."""
         scraper = SepaScraper(url=sample_url, data_dir=str(sample_data_dir))
 
-        # Mock the fecha.hoy to return a date that matches our mock HTML
-        with patch("sepa_pipeline.scraper.Fecha") as mock_fecha_class:
-            mock_fecha = Mock()
-            mock_fecha.hoy = "2025-10-23"
-            mock_fecha_class.return_value = mock_fecha
-            scraper.fecha = mock_fecha
+        download_link = scraper._parse_html(mock_httpx_response)
 
-            download_link = scraper._parse_html(mock_httpx_response)
+        assert download_link is not None
+        assert download_link == "https://example.com/sepa_jueves.zip"
 
-            assert download_link is not None
-            assert download_link == "https://example.com/download.zip"
-
-    def test_parse_html_no_match(
-        self, sample_url, sample_data_dir, mock_httpx_response
-    ):
-        """Test HTML parsing when no matching date is found."""
+    def test_parse_html_no_match(self, sample_url, sample_data_dir):
+        """Test HTML parsing when no matching day-of-week file is found."""
         scraper = SepaScraper(url=sample_url, data_dir=str(sample_data_dir))
 
-        # Mock the fecha.hoy to return a date that doesn't match our mock HTML
-        with patch("sepa_pipeline.scraper.Fecha") as mock_fecha_class:
-            mock_fecha = Mock()
-            mock_fecha.hoy = "2025-12-31"
-            mock_fecha_class.return_value = mock_fecha
-            scraper.fecha = mock_fecha
-
-            download_link = scraper._parse_html(mock_httpx_response)
-
-            assert download_link is None
-
-    def test_parse_html_no_containers(self, sample_url, sample_data_dir):
-        """Test HTML parsing when no package containers are found."""
-        scraper = SepaScraper(url=sample_url, data_dir=str(sample_data_dir))
-
-        # Create a mock response with no package containers
+        # Create a mock response with no matching day-of-week files
         mock_response = Mock()
-        mock_response.text = "<html><body><div>No packages here</div></body></html>"
+        mock_response.text = """
+        <html>
+            <body>
+                <a href="https://example.com/sepa_miercoles.zip">Download miercoles</a>
+                <a href="https://example.com/sepa_viernes.zip">Download viernes</a>
+                <a href="https://example.com/other_file.txt">Other file</a>
+            </body>
+        </html>
+        """
+
+        download_link = scraper._parse_html(mock_response)
+
+        assert download_link is None
+
+    def test_parse_html_no_links(self, sample_url, sample_data_dir):
+        """Test HTML parsing when no links are found."""
+        scraper = SepaScraper(url=sample_url, data_dir=str(sample_data_dir))
+
+        # Create a mock response with no links
+        mock_response = Mock()
+        mock_response.text = "<html><body><div>No links here</div></body></html>"
 
         download_link = scraper._parse_html(mock_response)
 
@@ -100,7 +96,7 @@ class TestSepaScraper:
 
     @pytest.mark.asyncio
     async def test_download_data_success(self, sample_url, sample_data_dir):
-        """Test successful data download."""
+        """Test successful data download with valid file size."""
         scraper = SepaScraper(url=sample_url, data_dir=str(sample_data_dir))
         download_link = "https://example.com/test.zip"
 
@@ -112,13 +108,17 @@ class TestSepaScraper:
             mock_fecha_class.return_value = mock_fecha
             scraper.fecha = mock_fecha
 
-            # Create a mock async context manager
+            # Create a mock async context manager with large content
             mock_response = Mock()
-            mock_response.headers = {"content-length": "1024"}
+            mock_response.headers = {"content-length": str(200 * 1024 * 1024)}  # 200MB
 
-            # Create an async iterator for aiter_bytes
+            # Create an async iterator that yields a large amount of data
             async def mock_aiter_bytes():
-                yield b"test data"
+                # Yield chunks that total to about 200MB
+                chunk_size = 1024 * 1024  # 1MB chunks
+                total_chunks = 200
+                for _ in range(total_chunks):
+                    yield b"x" * chunk_size
 
             mock_response.aiter_bytes.return_value = mock_aiter_bytes()
 
@@ -136,7 +136,7 @@ class TestSepaScraper:
             # Mock the stream method to return our context manager
             scraper.client.stream = Mock(return_value=MockAsyncContext(mock_response))
 
-            result = await scraper._download_data(download_link)
+            result = await scraper._download_data(download_link, min_file_size_mb=150)
 
             assert result is True
             # Check that file was created
@@ -164,7 +164,9 @@ class TestSepaScraper:
                 scraper, "_connect_to_source", return_value=mock_httpx_response
             ),
             patch.object(
-                scraper, "_parse_html", return_value="https://example.com/test.zip"
+                scraper,
+                "_parse_html",
+                return_value="https://example.com/sepa_jueves.zip",
             ),
             patch.object(scraper, "_download_data", return_value=True),
         ):
@@ -200,3 +202,127 @@ class TestSepaScraper:
             result = await scraper.hurtar_datos()
 
             assert result is False
+
+    @pytest.mark.asyncio
+    async def test_download_data_file_size_validation_success(
+        self, sample_url, sample_data_dir
+    ):
+        """Test successful download with valid file size."""
+        scraper = SepaScraper(url=sample_url, data_dir=str(sample_data_dir))
+        download_link = "https://example.com/test.zip"
+
+        # Mock the fecha.hoy
+        with patch("sepa_pipeline.scraper.Fecha") as mock_fecha_class:
+            mock_fecha = Mock()
+            mock_fecha.hoy = "2025-10-23"
+            mock_fecha_class.return_value = mock_fecha
+            scraper.fecha = mock_fecha
+
+            # Create a mock async context manager with large content
+            mock_response = Mock()
+            mock_response.headers = {"content-length": str(200 * 1024 * 1024)}  # 200MB
+
+            # Create an async iterator that yields a large amount of data
+            async def mock_aiter_bytes():
+                # Yield chunks that total to about 200MB
+                chunk_size = 1024 * 1024  # 1MB chunks
+                total_chunks = 200
+                for _ in range(total_chunks):
+                    yield b"x" * chunk_size
+
+            mock_response.aiter_bytes.return_value = mock_aiter_bytes()
+
+            # Create a proper async context manager
+            class MockAsyncContext:
+                def __init__(self, response):
+                    self.response = response
+
+                async def __aenter__(self):
+                    return self.response
+
+                async def __aexit__(self, exc_type, exc_val, exc_tb):
+                    pass
+
+            # Mock the stream method to return our context manager
+            scraper.client.stream = Mock(return_value=MockAsyncContext(mock_response))
+
+            result = await scraper._download_data(download_link, min_file_size_mb=150)
+
+            assert result is True
+            # Check that file was created
+            expected_file = sample_data_dir / "sepa_precios_2025-10-23.zip"
+            assert expected_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_download_data_file_size_validation_failure(
+        self, sample_url, sample_data_dir
+    ):
+        """Test download failure when file size is too small."""
+        scraper = SepaScraper(url=sample_url, data_dir=str(sample_data_dir))
+        download_link = "https://example.com/test.zip"
+
+        # Mock the fecha.hoy
+        with patch("sepa_pipeline.scraper.Fecha") as mock_fecha_class:
+            mock_fecha = Mock()
+            mock_fecha.hoy = "2025-10-23"
+            mock_fecha_class.return_value = mock_fecha
+            scraper.fecha = mock_fecha
+
+            # Create a mock async context manager with small content
+            mock_response = Mock()
+            mock_response.headers = {
+                "content-length": "172"
+            }  # Small file like the current issue
+
+            # Create an async iterator that yields a small amount of data
+            async def mock_aiter_bytes():
+                yield b"x" * 172  # Small file
+
+            mock_response.aiter_bytes.return_value = mock_aiter_bytes()
+
+            # Create a proper async context manager
+            class MockAsyncContext:
+                def __init__(self, response):
+                    self.response = response
+
+                async def __aenter__(self):
+                    return self.response
+
+                async def __aexit__(self, exc_type, exc_val, exc_tb):
+                    pass
+
+            # Mock the stream method to return our context manager
+            scraper.client.stream = Mock(return_value=MockAsyncContext(mock_response))
+
+            result = await scraper._download_data(download_link, min_file_size_mb=150)
+
+            assert result is False
+            # Check that file was NOT created (should be deleted)
+            expected_file = sample_data_dir / "sepa_precios_2025-10-23.zip"
+            assert not expected_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_hurtar_datos_with_file_size_validation(
+        self, sample_url, sample_data_dir, mock_httpx_response
+    ):
+        """Test complete scraping process with file size validation."""
+        scraper = SepaScraper(url=sample_url, data_dir=str(sample_data_dir))
+
+        with (
+            patch.object(
+                scraper, "_connect_to_source", return_value=mock_httpx_response
+            ),
+            patch.object(
+                scraper,
+                "_parse_html",
+                return_value="https://example.com/sepa_jueves.zip",
+            ),
+            patch.object(scraper, "_download_data", return_value=True),
+        ):
+
+            result = await scraper.hurtar_datos(min_file_size_mb=150)
+
+            assert result is True
+            scraper._download_data.assert_called_once_with(
+                "https://example.com/sepa_jueves.zip", 150
+            )

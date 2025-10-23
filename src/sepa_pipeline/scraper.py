@@ -18,13 +18,13 @@ class SepaScraper:
 
     # Spanish day names mapping
     SPANISH_DAYS = {
-        0: "lunes",      # Monday
-        1: "martes",     # Tuesday
+        0: "lunes",  # Monday
+        1: "martes",  # Tuesday
         2: "miercoles",  # Wednesday (no accent in filename)
-        3: "jueves",     # Thursday
-        4: "viernes",    # Friday
-        5: "sabado",     # Saturday (no accent in filename)
-        6: "domingo",    # Sunday
+        3: "jueves",  # Thursday
+        4: "viernes",  # Friday
+        5: "sabado",  # Saturday (no accent in filename)
+        6: "domingo",  # Sunday
     }
 
     def __init__(self, url: str, data_dir: str):
@@ -80,51 +80,58 @@ class SepaScraper:
         try:
             logger.info("Starting HTML parsing")
             soup = BeautifulSoup(response.text, "html.parser")
-            
+
             # Get today's Spanish day name
             day_name = self._get_spanish_day_name()
             logger.info(f"Today is: {day_name}")
-            
+
             # Find all links on the page
             all_links = soup.find_all("a", href=True)
             logger.info(f"Found {len(all_links)} total links on page")
-            
+
             # Look for link containing "sepa_" + day name + ".zip"
             target_filename = f"sepa_{day_name}.zip"
             logger.info(f"Searching for file: {target_filename}")
-            
+
             for link in all_links:
-                href = link.get("href", "") # type: ignore[attr-defined]
+                href = link.get("href", "")  # type: ignore[union-attr]
 
                 # ignore 'mypy error' because the code is fine
-                # A _QueryResults (or ResultSet) is what you get when you call methods like 
-                # find_all() or select()—it is essentially a list-like container of Tag objects,
-                # so you must access elements within it before you can call methods like get().
+                # A _QueryResults (or ResultSet) is what you get when you call methods
+                # like find_all() or select()—it is essentially a list-like container
+                # of Tag objects, so you must access elements within it before you can
+                # call methods like get().
                 #
-                # links = soup.find_all('a', class_='product-link')  # returns a ResultSet
+                # links = soup.find_all('a', class_='product-link')
                 # hrefs = [link.get('href') for link in links]
                 # .get() works on each Tag, not on the ResultSet
-                
-                
+
                 # Check if this link contains the target filename
                 if target_filename in str(href).lower():
-                    logger.info(f"Found matching download link!")
+                    logger.info("Found matching download link!")
                     logger.info(f"Link: {href}")
-                    
+
                     # The link should already be absolute from the CKAN dataset page
                     return str(href)
-            
+
             logger.warning(f"No download link found for {target_filename}")
             logger.debug(f"Searched all {len(all_links)} links")
             return None
-            
+
         except Exception as e:
             logger.error(f"Error parsing HTML: {e}")
             return None
 
-    async def _download_data(self, download_link: str) -> bool:
+    async def _download_data(
+        self, download_link: str, min_file_size_mb: int = 150
+    ) -> bool:
         """
         Downloads and saves the data from the provided link.
+
+        Args:
+            download_link: URL to download the file from
+            min_file_size_mb: Minimum file size in MB to consider the download
+                successful
         """
         if not download_link:
             logger.error("No download link provided")
@@ -151,7 +158,23 @@ class SepaScraper:
                             f.write(chunk)
                             pbar.update(len(chunk))
 
-            logger.info("File downloaded successfully")
+            # Validate file size after download
+            file_size_bytes = file_path.stat().st_size
+            file_size_mb = file_size_bytes / (1024 * 1024)
+
+            logger.info(f"Downloaded file size: {file_size_mb:.2f} MB")
+
+            if file_size_mb < min_file_size_mb:
+                logger.error(
+                    f"Downloaded file is too small: {file_size_mb:.2f} MB "
+                    f"(minimum expected: {min_file_size_mb} MB). "
+                    f"The data source may not have updated data for today."
+                )
+                # Remove the invalid file
+                file_path.unlink()
+                return False
+
+            logger.info("File downloaded successfully and size validated")
             return True
         except httpx.RequestError as exc:
             logger.error(f"Error downloading the file: {exc}")
@@ -160,10 +183,14 @@ class SepaScraper:
             logger.error(f"Unexpected error downloading the file: {e}")
             return False
 
-    async def hurtar_datos(self) -> bool:
+    async def hurtar_datos(self, min_file_size_mb: int = 150) -> bool:
         """
         Main async function that orchestrates the scraping process.
         Returns True if scraping and download were successful, False otherwise.
+
+        Args:
+            min_file_size_mb: Minimum file size in MB to consider the download
+                successful
         """
         response = await self._connect_to_source()
         if not response:
@@ -176,4 +203,4 @@ class SepaScraper:
             logger.error(f"No download link found for {day_name} ({self.fecha.hoy})")
             return False
 
-        return await self._download_data(download_link)
+        return await self._download_data(download_link, min_file_size_mb)
