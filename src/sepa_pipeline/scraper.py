@@ -1,5 +1,6 @@
 """SEPA Precios data scraper"""
 
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -15,6 +16,17 @@ from .utils.logger import logger
 class SepaScraper:
     """Class to scrape SEPA precios."""
 
+    # Spanish day names mapping
+    SPANISH_DAYS = {
+        0: "lunes",      # Monday
+        1: "martes",     # Tuesday
+        2: "miercoles",  # Wednesday (no accent in filename)
+        3: "jueves",     # Thursday
+        4: "viernes",    # Friday
+        5: "sabado",     # Saturday (no accent in filename)
+        6: "domingo",    # Sunday
+    }
+
     def __init__(self, url: str, data_dir: str):
         """
         Initializes the Scraper.
@@ -27,6 +39,15 @@ class SepaScraper:
         self.data_dir = Path(data_dir)
         self.fecha = Fecha()
         self.client = httpx.AsyncClient(timeout=20)
+
+    def _get_spanish_day_name(self) -> str:
+        """
+        Get the Spanish day name for today.
+        Returns: Spanish day name in lowercase (e.g., 'jueves')
+        """
+        today = datetime.now()
+        day_index = today.weekday()
+        return self.SPANISH_DAYS[day_index]
 
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10)
@@ -53,52 +74,43 @@ class SepaScraper:
 
     def _parse_html(self, response: httpx.Response) -> Optional[str]:
         """
-        Parses the HTML to find the download link for today's date.
+        Parses the HTML to find the download link for today's day of the week.
+        The site now uses Spanish day names (e.g., sepa_jueves.zip for Thursday).
         """
         try:
             logger.info("Starting HTML parsing")
             soup = BeautifulSoup(response.text, "html.parser")
-            pkg_containers = soup.select("div.pkg-container")
-            logger.info(f"Found {len(pkg_containers)} package containers")
-            if not pkg_containers:
-                logger.warning("No 'pkg-container' elements found in the HTML")
-                return None
-        except Exception as e:
-            logger.error(f"Error parsing 'pkg-containers' in HTML: {e}")
+            
+            # Get today's Spanish day name
+            day_name = self._get_spanish_day_name()
+            logger.info(f"Today is: {day_name}")
+            
+            # Find all links on the page
+            all_links = soup.find_all("a", href=True)
+            logger.info(f"Found {len(all_links)} total links on page")
+            
+            # Look for link containing "sepa_" + day name + ".zip"
+            target_filename = f"sepa_{day_name}.zip"
+            logger.info(f"Searching for file: {target_filename}")
+            
+            for link in all_links:
+                href = link.get("href", "")
+                
+                # Check if this link contains the target filename
+                if target_filename in href.lower():
+                    logger.info(f"Found matching download link!")
+                    logger.info(f"Link: {href}")
+                    
+                    # The link should already be absolute from the CKAN dataset page
+                    return href
+            
+            logger.warning(f"No download link found for {target_filename}")
+            logger.debug(f"Searched all {len(all_links)} links")
             return None
-
-        today_str = self.fecha.hoy
-        logger.info(f"Searching for packages matching date: {today_str}")
-
-        for pkg in pkg_containers:
-            package_info = pkg.find("div", class_="package-info")
-            if not package_info:
-                continue
-
-            description_tag = package_info.find("p")  # type: ignore
-            if not description_tag:
-                continue
-
-            description = description_tag.get_text(strip=True)
-            if today_str in description:
-                logger.info(f"Found matching package for date {today_str}")
-                download_button = pkg.find("a")
-                if download_button:
-                    button = download_button.find("button")  # type: ignore
-                    if button and "DESCARGAR" in button.get_text():
-                        pass  # Found the right button
-                    else:
-                        download_button = None
-                if download_button and download_button.get("href"):  # type: ignore
-                    download_link = str(download_button["href"])  # type: ignore
-                    logger.info(f"Found download link: {download_link}")
-                    return download_link
-                else:
-                    logger.warning("Matching package found, but no download link.")
-                    return None
-
-        logger.info(f"No package found for date: {today_str}")
-        return None
+            
+        except Exception as e:
+            logger.error(f"Error parsing HTML: {e}")
+            return None
 
     async def _download_data(self, download_link: str) -> bool:
         """
@@ -150,7 +162,8 @@ class SepaScraper:
 
         download_link = self._parse_html(response)
         if not download_link:
-            logger.error(f"No download link found for date: {self.fecha.hoy}")
+            day_name = self._get_spanish_day_name()
+            logger.error(f"No download link found for {day_name} ({self.fecha.hoy})")
             return False
 
         return await self._download_data(download_link)

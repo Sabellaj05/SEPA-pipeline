@@ -1,13 +1,13 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "sepa-pipeline"
 version = "0.1.0"
 description = "Data pipeline for SEPA Dataset"
 authors = [
-    {name = "saens",email = "sabellamanjuan@gmail.com"}
+    {name = "saens", email = "sabellamanjuan@gmail.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.12"
@@ -18,7 +18,7 @@ dependencies = [
     "tenacity>=9.1.2,<10.0.0"
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "black>=23.0.0",
     "flake8>=6.0.0",
@@ -31,12 +31,6 @@ test = [
     "pytest-asyncio>=0.21.0",
     "pytest-mock>=3.10.0"
 ]
-all = ["sepa-pipeline[dev,test]"]
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["sepa_pipeline*"]
-exclude = ["tests*", "logs*", "data*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
