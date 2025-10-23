@@ -1,7 +1,7 @@
 import asyncio
-from sepa_pipeline.scraper import SepaScraper
-from sepa_pipeline.utils.logger import logger
 
+from .scraper import SepaScraper
+from .utils.logger import logger
 
 URL = "https://datos.produccion.gob.ar/dataset/sepa-precios"
 DATA_DIR = "data"
@@ -16,7 +16,7 @@ def main() -> None:
 
     # Instanciamos el scraper
     scraper = SepaScraper(url=URL, data_dir=DATA_DIR)
-    
+
     # Le damos caña mamahuevo
     success = asyncio.run(scraper.hurtar_datos())
 
