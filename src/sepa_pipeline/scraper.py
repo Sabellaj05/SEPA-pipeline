@@ -94,7 +94,17 @@ class SepaScraper:
             logger.info(f"Searching for file: {target_filename}")
             
             for link in all_links:
-                href = link.get("href", "")
+                href = link.get("href", "") # type: ignore[attr-defined]
+
+                # ignore 'mypy error' because the code is fine
+                # A _QueryResults (or ResultSet) is what you get when you call methods like 
+                # find_all() or select()—it is essentially a list-like container of Tag objects,
+                # so you must access elements within it before you can call methods like get().
+                #
+                # links = soup.find_all('a', class_='product-link')  # returns a ResultSet
+                # hrefs = [link.get('href') for link in links]
+                # .get() works on each Tag, not on the ResultSet
+                
                 
                 # Check if this link contains the target filename
                 if target_filename in str(href).lower():
