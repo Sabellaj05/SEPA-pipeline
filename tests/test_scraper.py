@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from sepa_pipeline.scraper import SepaScraper
+from sepa_pipeline.utils.fecha import Fecha
 
 
 class TestSepaScraper:
@@ -60,7 +61,7 @@ class TestSepaScraper:
         download_link = scraper._parse_html(mock_httpx_response)
 
         assert download_link is not None
-        assert download_link == "https://example.com/sepa_jueves.zip"
+        assert download_link == f"https://example.com/sepa_{Fecha().nombre_weekday}.zip"
 
     def test_parse_html_no_match(self, sample_url, sample_data_dir):
         """Test HTML parsing when no matching day-of-week file is found."""
@@ -104,7 +105,7 @@ class TestSepaScraper:
         with patch("sepa_pipeline.scraper.Fecha") as mock_fecha_class:
             # Setup fecha mock
             mock_fecha = Mock()
-            mock_fecha.hoy = "2025-10-23"
+            mock_fecha.hoy = "2042-42-42"
             mock_fecha_class.return_value = mock_fecha
             scraper.fecha = mock_fecha
 
@@ -140,7 +141,7 @@ class TestSepaScraper:
 
             assert result is True
             # Check that file was created
-            expected_file = sample_data_dir / "sepa_precios_2025-10-23.zip"
+            expected_file = sample_data_dir / f"sepa_precios_{mock_fecha.hoy}.zip"
             assert expected_file.exists()
 
     @pytest.mark.asyncio
@@ -214,7 +215,7 @@ class TestSepaScraper:
         # Mock the fecha.hoy
         with patch("sepa_pipeline.scraper.Fecha") as mock_fecha_class:
             mock_fecha = Mock()
-            mock_fecha.hoy = "2025-10-23"
+            mock_fecha.hoy = "2042-42-42"
             mock_fecha_class.return_value = mock_fecha
             scraper.fecha = mock_fecha
 
@@ -250,7 +251,7 @@ class TestSepaScraper:
 
             assert result is True
             # Check that file was created
-            expected_file = sample_data_dir / "sepa_precios_2025-10-23.zip"
+            expected_file = sample_data_dir / f"sepa_precios_{mock_fecha.hoy}.zip"
             assert expected_file.exists()
 
     @pytest.mark.asyncio
@@ -264,7 +265,7 @@ class TestSepaScraper:
         # Mock the fecha.hoy
         with patch("sepa_pipeline.scraper.Fecha") as mock_fecha_class:
             mock_fecha = Mock()
-            mock_fecha.hoy = "2025-10-23"
+            mock_fecha.hoy = "2042-42-42"
             mock_fecha_class.return_value = mock_fecha
             scraper.fecha = mock_fecha
 
@@ -298,7 +299,7 @@ class TestSepaScraper:
 
             assert result is False
             # Check that file was NOT created (should be deleted)
-            expected_file = sample_data_dir / "sepa_precios_2025-10-23.zip"
+            expected_file = sample_data_dir / f"sepa_precios_{mock_fecha.hoy}.zip"
             assert not expected_file.exists()
 
     @pytest.mark.asyncio

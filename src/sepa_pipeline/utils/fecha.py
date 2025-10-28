@@ -6,6 +6,18 @@ from datetime import datetime, timedelta, timezone
 
 
 class Fecha:
+
+    # Spanish day names mapping
+    SPANISH_DAYS = {
+        0: "lunes",  # Monday
+        1: "martes",  # Tuesday
+        2: "miercoles",  # Wednesday (no accent in filename)
+        3: "jueves",  # Thursday
+        4: "viernes",  # Friday
+        5: "sabado",  # Saturday (no accent in filename)
+        6: "domingo",  # Sunday
+    }
+
     @property
     def _now(self) -> datetime:
         """Returns current time in date in AR timezone"""
@@ -21,3 +33,11 @@ class Fecha:
     def hoy_full(self) -> str:
         """Returns the current date in YYYY-MM-DD_HH:MM:SS format"""
         return self._now.strftime("%Y-%m-%d_%H:%M:%S")
+
+    @property
+    def nombre_weekday(self) -> str:
+        """Returns the current weekday name in spanish
+        lowercase (lunes, martes, ...)
+        """
+        day_index = self._now.weekday()
+        return self.SPANISH_DAYS[day_index]

@@ -1,6 +1,5 @@
 """SEPA Precios data scraper"""
 
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -16,17 +15,6 @@ from .utils.logger import logger
 class SepaScraper:
     """Class to scrape SEPA precios."""
 
-    # Spanish day names mapping
-    SPANISH_DAYS = {
-        0: "lunes",  # Monday
-        1: "martes",  # Tuesday
-        2: "miercoles",  # Wednesday (no accent in filename)
-        3: "jueves",  # Thursday
-        4: "viernes",  # Friday
-        5: "sabado",  # Saturday (no accent in filename)
-        6: "domingo",  # Sunday
-    }
-
     def __init__(self, url: str, data_dir: str):
         """
         Initializes the Scraper.
@@ -39,15 +27,6 @@ class SepaScraper:
         self.data_dir = Path(data_dir)
         self.fecha = Fecha()
         self.client = httpx.AsyncClient(timeout=20)
-
-    def _get_spanish_day_name(self) -> str:
-        """
-        Get the Spanish day name for today.
-        Returns: Spanish day name in lowercase (e.g., 'jueves')
-        """
-        today = datetime.now()
-        day_index = today.weekday()
-        return self.SPANISH_DAYS[day_index]
 
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10)
@@ -82,7 +61,7 @@ class SepaScraper:
             soup = BeautifulSoup(response.text, "html.parser")
 
             # Get today's Spanish day name
-            day_name = self._get_spanish_day_name()
+            day_name = self.fecha.nombre_weekday
             logger.info(f"Today is: {day_name}")
 
             # Find all links on the page
@@ -199,7 +178,7 @@ class SepaScraper:
 
         download_link = self._parse_html(response)
         if not download_link:
-            day_name = self._get_spanish_day_name()
+            day_name = self.fecha.nombre_weekday
             logger.error(f"No download link found for {day_name} ({self.fecha.hoy})")
             return False
 
