@@ -23,6 +23,7 @@ class Fecha:
         """Returns current time in date in AR timezone"""
         timezone_ar = timezone(timedelta(hours=-3))
         return datetime.now(timezone_ar)
+
     @property
     def ahora(self) -> datetime:
         """Public, Current AR(UTC-3) timezone-aware datetime object"""
