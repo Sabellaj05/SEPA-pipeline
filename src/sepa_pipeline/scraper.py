@@ -28,6 +28,14 @@ class SepaScraper:
         self.fecha = Fecha()
         self.client = httpx.AsyncClient(timeout=20)
 
+    def _scraped_filename(self) -> str:
+        """Return (weekday_based) filename pattern expected on the SEPA site"""
+        return f"sepa_{self.fecha.nombre_weekday}.zip"
+
+    def _storage_filename(self) -> str:
+        """Return (date-based) filename used when storing the downladed file"""
+        return f"sepa_precios{self.fecha.hoy}.zip"
+
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10)
     )
@@ -69,7 +77,8 @@ class SepaScraper:
             logger.info(f"Found {len(all_links)} total links on page")
 
             # Look for link containing "sepa_" + day name + ".zip"
-            target_filename = f"sepa_{day_name}.zip"
+            # target_filename = f"sepa_{day_name}.zip"
+            target_filename = self._scraped_filename()
             logger.info(f"Searching for file: {target_filename}")
 
             for link in all_links:
@@ -119,8 +128,7 @@ class SepaScraper:
         try:
             self.data_dir.mkdir(exist_ok=True)
 
-            today_date = self.fecha.hoy
-            file_name = f"sepa_precios_{today_date}.zip"
+            file_name = self._storage_filename()
             file_path = self.data_dir / file_name
 
             logger.info(f"Downloading file: {file_name} to : {file_path}")
