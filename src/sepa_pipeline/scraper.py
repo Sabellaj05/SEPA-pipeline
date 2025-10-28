@@ -1,6 +1,5 @@
 """SEPA Precios data scraper"""
 
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -16,17 +15,6 @@ from .utils.logger import logger
 class SepaScraper:
     """Class to scrape SEPA precios."""
 
-    # Spanish day names mapping
-    SPANISH_DAYS = {
-        0: "lunes",  # Monday
-        1: "martes",  # Tuesday
-        2: "miercoles",  # Wednesday (no accent in filename)
-        3: "jueves",  # Thursday
-        4: "viernes",  # Friday
-        5: "sabado",  # Saturday (no accent in filename)
-        6: "domingo",  # Sunday
-    }
-
     def __init__(self, url: str, data_dir: str):
         """
         Initializes the Scraper.
@@ -40,14 +28,13 @@ class SepaScraper:
         self.fecha = Fecha()
         self.client = httpx.AsyncClient(timeout=20)
 
-    def _get_spanish_day_name(self) -> str:
-        """
-        Get the Spanish day name for today.
-        Returns: Spanish day name in lowercase (e.g., 'jueves')
-        """
-        today = datetime.now()
-        day_index = today.weekday()
-        return self.SPANISH_DAYS[day_index]
+    def _scraped_filename(self) -> str:
+        """Return (weekday_based) filename pattern expected on the SEPA site"""
+        return f"sepa_{self.fecha.nombre_weekday}.zip"
+
+    def _storage_filename(self) -> str:
+        """Return (date-based) filename used when storing the downladed file"""
+        return f"sepa_precios_{self.fecha.hoy}.zip"
 
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10)
@@ -82,7 +69,7 @@ class SepaScraper:
             soup = BeautifulSoup(response.text, "html.parser")
 
             # Get today's Spanish day name
-            day_name = self._get_spanish_day_name()
+            day_name = self.fecha.nombre_weekday
             logger.info(f"Today is: {day_name}")
 
             # Find all links on the page
@@ -90,7 +77,8 @@ class SepaScraper:
             logger.info(f"Found {len(all_links)} total links on page")
 
             # Look for link containing "sepa_" + day name + ".zip"
-            target_filename = f"sepa_{day_name}.zip"
+            # target_filename = f"sepa_{day_name}.zip"
+            target_filename = self._scraped_filename()
             logger.info(f"Searching for file: {target_filename}")
 
             for link in all_links:
@@ -140,8 +128,7 @@ class SepaScraper:
         try:
             self.data_dir.mkdir(exist_ok=True)
 
-            today_date = self.fecha.hoy
-            file_name = f"sepa_precios_{today_date}.zip"
+            file_name = self._storage_filename()
             file_path = self.data_dir / file_name
 
             logger.info(f"Downloading file: {file_name} to : {file_path}")
@@ -199,7 +186,7 @@ class SepaScraper:
 
         download_link = self._parse_html(response)
         if not download_link:
-            day_name = self._get_spanish_day_name()
+            day_name = self.fecha.nombre_weekday
             logger.error(f"No download link found for {day_name} ({self.fecha.hoy})")
             return False
 
