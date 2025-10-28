@@ -34,7 +34,7 @@ class SepaScraper:
 
     def _storage_filename(self) -> str:
         """Return (date-based) filename used when storing the downladed file"""
-        return f"sepa_precios{self.fecha.hoy}.zip"
+        return f"sepa_precios_{self.fecha.hoy}.zip"
 
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10)
