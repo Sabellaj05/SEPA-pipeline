@@ -171,7 +171,6 @@ class TestSepaScraper:
             ),
             patch.object(scraper, "_download_data", return_value=True),
         ):
-
             result = await scraper.hurtar_datos()
 
             assert result is True
@@ -199,7 +198,6 @@ class TestSepaScraper:
             ),
             patch.object(scraper, "_parse_html", return_value=None),
         ):
-
             result = await scraper.hurtar_datos()
 
             assert result is False
@@ -320,7 +318,6 @@ class TestSepaScraper:
             ),
             patch.object(scraper, "_download_data", return_value=True),
         ):
-
             result = await scraper.hurtar_datos(min_file_size_mb=150)
 
             assert result is True

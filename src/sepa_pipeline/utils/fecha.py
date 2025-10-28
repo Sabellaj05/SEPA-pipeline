@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 
 
 class Fecha:
-
     # Spanish day names mapping
     SPANISH_DAYS = {
         0: "lunes",  # Monday
