@@ -1,6 +1,7 @@
 """Tests for the main entry point."""
 
-from unittest.mock import Mock, patch
+import pytest
+from unittest.mock import AsyncMock, patch
 
 from sepa_pipeline.main import main
 
@@ -8,49 +9,53 @@ from sepa_pipeline.main import main
 class TestMain:
     """Test cases for main entry point."""
 
-    @patch("sepa_pipeline.main.asyncio.run")
+    @pytest.mark.asyncio
     @patch("sepa_pipeline.main.SepaScraper")
-    def test_main_success(self, mock_scraper_class, mock_asyncio_run):
+    async def test_main_success(self, mock_scraper_class):
         """Test successful main execution."""
-        # Setup mocks
-        mock_scraper = Mock()
-        mock_scraper_class.return_value = mock_scraper
-        mock_asyncio_run.return_value = True
+        # Setup async mock for the context manager
+        mock_scraper_instance = AsyncMock()
+        mock_scraper_instance.hurtar_datos.return_value = True
+
+        # When the class is instantiated, its __aenter__ method should return our
+        # instance
+        mock_scraper_class.return_value.__aenter__.return_value = mock_scraper_instance
 
         # Run main
-        main()
+        result = await main()
 
         # Verify scraper was created with correct parameters
         mock_scraper_class.assert_called_once_with(
             url="https://datos.produccion.gob.ar/dataset/sepa-precios", data_dir="data"
         )
 
-        # Verify asyncio.run was called
-        mock_asyncio_run.assert_called_once()
-        # Check that the call was made with a callable (the method)
-        call_args = mock_asyncio_run.call_args[0]
-        assert callable(call_args[0])
+        # Verify hurtar_datos was called
+        mock_scraper_instance.hurtar_datos.assert_awaited_once()
 
-    @patch("sepa_pipeline.main.asyncio.run")
+        # Verify exit code
+        assert result == 0
+
+    @pytest.mark.asyncio
     @patch("sepa_pipeline.main.SepaScraper")
-    def test_main_failure(self, mock_scraper_class, mock_asyncio_run):
+    async def test_main_failure(self, mock_scraper_class):
         """Test main execution when scraping fails."""
-        # Setup mocks
-        mock_scraper = Mock()
-        mock_scraper_class.return_value = mock_scraper
-        mock_asyncio_run.return_value = False
+        # Setup async mock for the context manager
+        mock_scraper_instance = AsyncMock()
+        mock_scraper_instance.hurtar_datos.return_value = False
+
+        mock_scraper_class.return_value.__aenter__.return_value = mock_scraper_instance
 
         # Run main
-        main()
+        result = await main()
 
         # Verify scraper was created
         mock_scraper_class.assert_called_once()
 
-        # Verify asyncio.run was called
-        mock_asyncio_run.assert_called_once()
-        # Check that the call was made with a callable (the method)
-        call_args = mock_asyncio_run.call_args[0]
-        assert callable(call_args[0])
+        # Verify hurtar_datos was called
+        mock_scraper_instance.hurtar_datos.assert_awaited_once()
+
+        # Verify exit code
+        assert result == 1
 
     def test_main_imports(self):
         """Test that main module can be imported without errors."""

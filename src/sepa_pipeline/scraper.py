@@ -1,7 +1,8 @@
 """SEPA Precios data scraper"""
 
 from pathlib import Path
-from typing import Optional
+from types import TracebackType
+from typing import Optional, Self
 
 import httpx
 from bs4 import BeautifulSoup
@@ -26,7 +27,20 @@ class SepaScraper:
         self.url = url
         self.data_dir = Path(data_dir)
         self.fecha = Fecha()
-        self.client = httpx.AsyncClient(timeout=20)
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def __aenter__(self) -> Self:
+        self._client = httpx.AsyncClient(timeout=30.0)
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]] = None,
+        exc_val: Optional[BaseException] = None,
+        exc_tb: Optional[TracebackType] = None,
+    ) -> None:
+        if self._client:
+            await self._client.aclose()
 
     def _scraped_filename(self) -> str:
         """Return (weekday_based) filename pattern expected on the SEPA site"""
@@ -35,6 +49,15 @@ class SepaScraper:
     def _storage_filename(self) -> str:
         """Return (date-based) filename used when storing the downladed file"""
         return f"sepa_precios_{self.fecha.hoy}.zip"
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        """Get the HTTP client, error if not initialized"""
+        if self._client is None:
+            raise RuntimeError(
+                "Client not initialized, use 'async with SepaScraper(...)' pattern"
+            )
+        return self._client
 
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10)
@@ -47,17 +70,22 @@ class SepaScraper:
         try:
             response = await self.client.get(self.url)
             response.raise_for_status()
+
+            if not response.text:
+                raise ValueError("No content on the Response")
+
             logger.info("Successfully connected to source")
             return response
+
+        # let tenacity handle the error with 'raise'
         except httpx.RequestError as exc:
             logger.error(f"Error while requesting {exc.request.url!r}: {exc}")
-            return None
+            raise
         except httpx.HTTPStatusError as exc:
             logger.error(
-                f"Error response {exc.response.status_code} while requesting "
-                f"{exc.request.url!r}"
+                f"HTTP {exc.response.status_code} errror for {exc.request.url!r}"
             )
-            return None
+            raise
 
     def _parse_html(self, response: httpx.Response) -> Optional[str]:
         """
@@ -131,12 +159,24 @@ class SepaScraper:
             file_name = self._storage_filename()
             file_path = self.data_dir / file_name
 
-            logger.info(f"Downloading file: {file_name} to : {file_path}")
+            logger.info(f"Downloading file: {file_name}")
+            logger.info(f"Destination path: {file_path}")
+            logger.info(f"Source link: {download_link}")
 
             async with self.client.stream("GET", download_link) as response:
                 response.raise_for_status()
                 total = int(response.headers.get("content-length", 0))
 
+                if total > 0:
+                    total_mb = total / (1024 * 1024)
+                    logger.info(f"Expected file size: {total_mb:.2f} MB")
+
+                    if total_mb < min_file_size_mb * 0.69:
+                        logger.warning(
+                            f"Expected size ({total_mb:.2f} MB) smaller than "
+                            f"minimum ({min_file_size_mb}) MB"
+                        )
+                # Downlaod wit progressbar
                 with tqdm(
                     total=total, unit="iB", unit_scale=True, desc=file_name
                 ) as pbar:
@@ -158,7 +198,7 @@ class SepaScraper:
                     f"The data source may not have updated data for today."
                 )
                 # Remove the invalid file
-                file_path.unlink()
+                file_path.unlink(missing_ok=True)
                 return False
 
             logger.info("File downloaded successfully and size validated")
@@ -166,8 +206,17 @@ class SepaScraper:
         except httpx.RequestError as exc:
             logger.error(f"Error downloading the file: {exc}")
             return False
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                f"HTTP {exc.response.status_code} error downloading: {download_link}"
+            )
+            if file_path and file_path.exists():
+                file_path.unlink(missing_ok=True)
+            return False
         except Exception as e:
             logger.error(f"Unexpected error downloading the file: {e}")
+            if file_path and file_path.exists():
+                file_path.unlink(missing_ok=True)
             return False
 
     async def hurtar_datos(self, min_file_size_mb: int = 150) -> bool:
