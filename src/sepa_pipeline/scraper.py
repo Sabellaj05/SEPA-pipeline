@@ -1,7 +1,8 @@
 """SEPA Precios data scraper"""
 
 from pathlib import Path
-from typing import Optional
+from types import TracebackType
+from typing import Optional, Self
 
 import httpx
 from bs4 import BeautifulSoup
@@ -26,7 +27,20 @@ class SepaScraper:
         self.url = url
         self.data_dir = Path(data_dir)
         self.fecha = Fecha()
-        self.client = httpx.AsyncClient(timeout=20)
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def __aenter__(self) -> Self:
+        self._client = httpx.AsyncClient(timeout=30.0)
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]] = None,
+        exc_val: Optional[BaseException] = None,
+        exc_tb: Optional[TracebackType] = None,
+    ) -> None:
+        if self._client:
+            await self._client.aclose()
 
     def _scraped_filename(self) -> str:
         """Return (weekday_based) filename pattern expected on the SEPA site"""
@@ -35,6 +49,15 @@ class SepaScraper:
     def _storage_filename(self) -> str:
         """Return (date-based) filename used when storing the downladed file"""
         return f"sepa_precios_{self.fecha.hoy}.zip"
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        """Get the HTTP client, error if not initialized"""
+        if self._client is None:
+            raise RuntimeError(
+                "Client not initialized, use 'async with SepaScraper(...)' pattern"
+            )
+        return self._client
 
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10)
