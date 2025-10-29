@@ -57,13 +57,13 @@ uv sync --group test
 uv sync --group dev --group test
 ```
 
-### 4: *8Verify Installation**
+### 4: **Verify Installation**
 ```bash
 # Check if everything is installed
 uv run python -c "import sepa_pipeline; print('Package installed successfully')"
 
 # Run the application
-python main.py
+uv run main.py
 ```
 
 ## Usage
