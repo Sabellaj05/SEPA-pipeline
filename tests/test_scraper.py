@@ -82,26 +82,32 @@ class TestSepaScraper:
     @pytest.mark.asyncio
     async def test_parse_html_no_match(self, sample_url, sample_data_dir):
         """Test HTML parsing when no matching day-of-week file is found."""
-        async with SepaScraper(
-            url=sample_url, data_dir=str(sample_data_dir)
-        ) as scraper:
-            # Create a mock response with no matching day-of-week files
-            mock_response = Mock()
-            mock_response.text = """
-            <html>
-                <body>
-                    <a href="https://example.com/sepa_miercoles.zip">
-                        Download miercoles
-                    </a>
-                    <a href="https://example.com/sepa_viernes.zip">Download viernes</a>
-                    <a href="https://example.com/other_file.txt">Other file</a>
-                </body>
-            </html>
-            """
+        with patch("sepa_pipeline.scraper.Fecha") as mock_fecha_class:
+            # Mock Fecha to control the day of the week to a non-matching day
+            mock_fecha_instance = Mock()
+            mock_fecha_instance.nombre_weekday = "lunes"
+            mock_fecha_class.return_value = mock_fecha_instance
 
-            download_link = scraper._parse_html(mock_response)
+            async with SepaScraper(
+                url=sample_url, data_dir=str(sample_data_dir)
+            ) as scraper:
+                # Create a mock response with no matching day-of-week files
+                mock_response = Mock()
+                mock_response.text = """
+        <html>
+            <body>
+                <a href="https://example.com/sepa_miercoles.zip">
+                    Download miercoles
+                </a>
+                <a href="https://example.com/sepa_viernes.zip">Download viernes</a>
+                <a href="https://example.com/other_file.txt">Other file</a>
+            </body>
+        </html>
+                """
 
-            assert download_link is None
+                download_link = scraper._parse_html(mock_response)
+
+                assert download_link is None
 
     @pytest.mark.asyncio
     async def test_parse_html_no_links(self, sample_url, sample_data_dir):
