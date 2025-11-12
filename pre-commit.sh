@@ -6,4 +6,4 @@ uv run ruff check --fix src/ tests/
 echo "Running mypy for type cheking..."
 uv run mypy src/
 echo "Running pytest for cooking pasta..."
-uv run pytest
+uv run pytest -v

@@ -10,12 +10,25 @@ authors = [
     {name = "Sabellaj05", email = "sabellamanjuan@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1,<0.29.0",
     "beautifulsoup4>=4.13.3,<5.0.0",
     "tqdm>=4.67.1,<5.0.0",
     "tenacity>=9.1.2,<10.0.0"
+]
+
+requires-python = ">=3.12"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.5.0",
+    "mypy>=1.0.0",
+]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.10.0"
 ]
 
 [tool.ruff]
@@ -49,17 +62,6 @@ select = [
 [tool.ruff.lint.isort]
 known-first-party = ["sepa_pipeline"]
 
-[dependency-groups]
-dev = [
-    "ruff>=0.5.0",
-    "mypy>=1.0.0",
-]
-test = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-mock>=3.10.0"
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
