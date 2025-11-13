@@ -13,5 +13,14 @@ services:
       - "5432:5432"
     restart: unless-stopped
 
+  pgadmin:
+      image: dpage/pgadmin4:latest
+      environment:
+        PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+        PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+      ports:
+        - "8080:80" # Expose pgAdmin port to the host (e.g., 8080)
+      depends_on:
+        - postgres
 volumes:
   sepa_pgdata:

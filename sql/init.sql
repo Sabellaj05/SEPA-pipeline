@@ -133,3 +133,153 @@ CREATE INDEX idx_precios_marca ON precios(productos_marca) WHERE productos_marca
 -- Composite indexes for common query patterns
 CREATE INDEX idx_precios_producto_sucursal ON precios(id_producto, id_sucursal);
 CREATE INDEX idx_precios_producto_fecha ON precios(id_producto, fecha_vigencia);
+
+
+-- ============================================================================
+-- PARTITION MANAGEMENT
+-- ============================================================================
+
+-- Function to create daily partitions automatically
+CREATE OR REPLACE FUNCTION create_precios_partition(partition_date DATE)
+RETURNS VOID AS $$
+DECLARE
+    partition_name TEXT;
+    start_date TEXT;
+    end_date TEXT;
+BEGIN
+    partition_name := 'precios_' || to_char(partition_date, 'YYYY_MM_DD');
+    start_date := partition_date::TEXT;
+    end_date := (partition_date + INTERVAL '1 day')::TEXT;
+    
+    -- Check if partition already exists
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname = partition_name
+        AND n.nspname = 'public'
+    ) THEN
+        EXECUTE format(
+            'CREATE TABLE %I PARTITION OF precios FOR VALUES FROM (%L) TO (%L)',
+            partition_name, start_date, end_date
+        );
+        
+        RAISE NOTICE 'Created partition: %', partition_name;
+    ELSE
+        RAISE NOTICE 'Partition % already exists', partition_name;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to create partitions for a date range
+CREATE OR REPLACE FUNCTION create_precios_partitions_range(
+    start_date DATE,
+    end_date DATE
+)
+RETURNS VOID AS $$
+DECLARE
+    current_date DATE;
+BEGIN
+    current_date := start_date;
+    WHILE current_date <= end_date LOOP
+        PERFORM create_precios_partition(current_date);
+        current_date := current_date + INTERVAL '1 day';
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create partitions for the next 30 days
+SELECT create_precios_partitions_range(
+    CURRENT_DATE - INTERVAL '7 days',
+    CURRENT_DATE + INTERVAL '30 days'
+);
+
+-- ============================================================================
+-- VIEWS FOR EASIER QUERYING
+-- ============================================================================
+
+-- View to get latest prices for all products
+CREATE OR REPLACE VIEW v_precios_latest AS
+SELECT DISTINCT ON (p.id_comercio, p.id_bandera, p.id_sucursal, p.id_producto)
+    p.*,
+    s.sucursales_nombre,
+    s.sucursales_localidad,
+    s.sucursales_provincia,
+    c.comercio_bandera_nombre
+FROM precios p
+JOIN sucursales s ON (
+    p.id_comercio = s.id_comercio AND
+    p.id_bandera = s.id_bandera AND
+    p.id_sucursal = s.id_sucursal
+)
+JOIN comercios c ON (
+    p.id_comercio = c.id_comercio AND
+    p.id_bandera = c.id_bandera
+)
+ORDER BY p.id_comercio, p.id_bandera, p.id_sucursal, p.id_producto, p.scraped_at DESC;
+
+-- View for price comparison across branches
+CREATE OR REPLACE VIEW v_precio_comparacion AS
+SELECT 
+    p.id_producto,
+    pm.productos_descripcion,
+    pm.productos_marca,
+    p.id_comercio,
+    c.comercio_bandera_nombre,
+    p.id_sucursal,
+    s.sucursales_nombre,
+    s.sucursales_localidad,
+    p.productos_precio_lista,
+    p.fecha_vigencia,
+    AVG(p.productos_precio_lista) OVER (PARTITION BY p.id_producto, p.fecha_vigencia) as precio_promedio,
+    MIN(p.productos_precio_lista) OVER (PARTITION BY p.id_producto, p.fecha_vigencia) as precio_minimo,
+    MAX(p.productos_precio_lista) OVER (PARTITION BY p.id_producto, p.fecha_vigencia) as precio_maximo
+FROM precios p
+JOIN productos_master pm ON p.id_producto = pm.id_producto
+JOIN sucursales s ON (
+    p.id_comercio = s.id_comercio AND
+    p.id_bandera = s.id_bandera AND
+    p.id_sucursal = s.id_sucursal
+)
+JOIN comercios c ON (
+    p.id_comercio = c.id_comercio AND
+    p.id_bandera = c.id_bandera
+)
+WHERE p.scraped_at >= CURRENT_DATE - INTERVAL '7 days';
+
+-- ============================================================================
+-- MAINTENANCE PROCEDURES
+-- ============================================================================
+
+-- Function to drop old partitions (for data retention)
+CREATE OR REPLACE FUNCTION drop_old_precios_partitions(retention_days INTEGER)
+RETURNS VOID AS $$
+DECLARE
+    partition_record RECORD;
+    cutoff_date DATE;
+BEGIN
+    cutoff_date := CURRENT_DATE - retention_days;
+    
+    FOR partition_record IN
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+        AND tablename LIKE 'precios_%'
+        AND tablename ~ 'precios_\d{4}_\d{2}_\d{2}'
+    LOOP
+        -- Extract date from partition name
+        DECLARE
+            partition_date DATE;
+        BEGIN
+            partition_date := to_date(
+                substring(partition_record.tablename from 'precios_(\d{4}_\d{2}_\d{2})'),
+                'YYYY_MM_DD'
+            );
+            
+            IF partition_date < cutoff_date THEN
+                EXECUTE 'DROP TABLE IF EXISTS ' || partition_record.tablename;
+                RAISE NOTICE 'Dropped partition: %', partition_record.tablename;
+            END IF;
+        END;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
