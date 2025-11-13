@@ -139,36 +139,46 @@ CREATE INDEX idx_precios_producto_fecha ON precios(id_producto, fecha_vigencia);
 -- PARTITION MANAGEMENT
 -- ============================================================================
 
--- Function to create daily partitions automatically
 CREATE OR REPLACE FUNCTION create_precios_partition(partition_date DATE)
 RETURNS VOID AS $$
 DECLARE
     partition_name TEXT;
-    start_date TEXT;
-    end_date TEXT;
+    start_ts TIMESTAMPTZ;
+    end_ts   TIMESTAMPTZ;
 BEGIN
+    -- Partition table name
     partition_name := 'precios_' || to_char(partition_date, 'YYYY_MM_DD');
-    start_date := partition_date::TEXT;
-    end_date := (partition_date + INTERVAL '1 day')::TEXT;
-    
-    -- Check if partition already exists
+
+    -- Explicit UTC boundaries
+    start_ts := partition_date::timestamptz;            -- 00:00:00+00
+    end_ts   := (partition_date + 1)::timestamptz;      -- next day 00:00:00+00
+
+    -- Check if partition exists
     IF NOT EXISTS (
-        SELECT 1 FROM pg_class c
+        SELECT 1
+        FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE c.relname = partition_name
-        AND n.nspname = 'public'
+          AND n.nspname = 'public'
     ) THEN
+
         EXECUTE format(
-            'CREATE TABLE %I PARTITION OF precios FOR VALUES FROM (%L) TO (%L)',
-            partition_name, start_date, end_date
+            'CREATE TABLE %I PARTITION OF precios
+             FOR VALUES FROM (%L) TO (%L)',
+            partition_name,
+            start_ts,
+            end_ts
         );
-        
-        RAISE NOTICE 'Created partition: %', partition_name;
+
+        RAISE NOTICE 'Created partition: % (% → %)',
+            partition_name, start_ts, end_ts;
+
     ELSE
         RAISE NOTICE 'Partition % already exists', partition_name;
     END IF;
 END;
 $$ LANGUAGE plpgsql;
+
 
 -- Function to create partitions for a date range
 CREATE OR REPLACE FUNCTION create_precios_partitions_range(
@@ -251,33 +261,29 @@ WHERE p.scraped_at >= CURRENT_DATE - INTERVAL '7 days';
 -- ============================================================================
 
 -- Function to drop old partitions (for data retention)
+
 CREATE OR REPLACE FUNCTION drop_old_precios_partitions(retention_days INTEGER)
 RETURNS VOID AS $$
 DECLARE
-    partition_record RECORD;
-    cutoff_date DATE;
+    part RECORD;
+    cutoff DATE := CURRENT_DATE - retention_days;
 BEGIN
-    cutoff_date := CURRENT_DATE - retention_days;
-    
-    FOR partition_record IN
+    FOR part IN
         SELECT tablename
         FROM pg_tables
         WHERE schemaname = 'public'
-        AND tablename LIKE 'precios_%'
-        AND tablename ~ 'precios_\d{4}_\d{2}_\d{2}'
+          AND tablename ~ '^precios_\d{4}_\d{2}_\d{2}$'
     LOOP
-        -- Extract date from partition name
-        DECLARE
-            partition_date DATE;
+        -- Extract partition date
+        PERFORM NULL;
+        DECLARE pdate DATE;
         BEGIN
-            partition_date := to_date(
-                substring(partition_record.tablename from 'precios_(\d{4}_\d{2}_\d{2})'),
-                'YYYY_MM_DD'
-            );
-            
-            IF partition_date < cutoff_date THEN
-                EXECUTE 'DROP TABLE IF EXISTS ' || partition_record.tablename;
-                RAISE NOTICE 'Dropped partition: %', partition_record.tablename;
+            pdate := to_date(substring(part.tablename FROM '\d{4}_\d{2}_\d{2}'),
+                             'YYYY_MM_DD');
+
+            IF pdate < cutoff THEN
+                EXECUTE format('DROP TABLE IF EXISTS %I', part.tablename);
+                RAISE NOTICE 'Dropped partition: %', part.tablename;
             END IF;
         END;
     END LOOP;
