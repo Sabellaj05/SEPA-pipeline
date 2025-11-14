@@ -187,20 +187,20 @@ CREATE OR REPLACE FUNCTION create_precios_partitions_range(
 )
 RETURNS VOID AS $$
 DECLARE
-    current_date DATE;
+    curr_date DATE;
 BEGIN
-    current_date := start_date;
-    WHILE current_date <= end_date LOOP
-        PERFORM create_precios_partition(current_date);
-        current_date := current_date + INTERVAL '1 day';
+    curr_date := start_date;
+    WHILE curr_date <= end_date LOOP
+        PERFORM create_precios_partition(curr_date);
+        curr_date := curr_date + INTERVAL '1 day';
     END LOOP;
 END;
 $$ LANGUAGE plpgsql;
 
 -- Create partitions for the next 30 days
 SELECT create_precios_partitions_range(
-    CURRENT_DATE - INTERVAL '7 days',
-    CURRENT_DATE + INTERVAL '30 days'
+    (CURRENT_DATE - INTERVAL '7 days')::date,
+    (CURRENT_DATE + INTERVAL '30 days')::date
 );
 
 -- ============================================================================
