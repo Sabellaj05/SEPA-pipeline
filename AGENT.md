@@ -98,3 +98,46 @@ SEPA-pipeline/
 - **SPC-4: Pipeline Automation/Orchestration**: Future goal (e.g., Airflow).
 - **SPC-5: Analytics Layer**: Future goal.
 
+
+## 8. Changelog & Debugging Log
+
+### 2025-11-20: Ingestion Pipeline Implementation (SPC-3)
+
+**Major Refactoring**:
+- Split monolithic `ingestion.py` into modular components:
+    - `config.py`: Centralized configuration.
+    - `extractor.py`: Parallel ZIP extraction.
+    - `validator.py`: Data integrity and schema validation.
+    - `loader.py`: Database loading logic (Upsert + COPY).
+    - `pipeline.py`: Orchestration script.
+
+**Bugs Fixed**:
+1.  **`NotNullViolation` (Footer Detection)**:
+    - **Issue**: Footer rows like "Última actualización" caused null violations.
+    - **Fix**: Implemented robust, case-insensitive footer detection in `SEPAValidator._drop_footer_rows`.
+2.  **`CSV malformed` Warnings**:
+    - **Issue**: Pipe-separated data caused parsing warnings.
+    - **Fix**: Added `quote_char=None` to `pl.read_csv`.
+3.  **`ModuleNotFoundError`**:
+    - **Issue**: Incorrect imports (`src.sepa_pipeline...`).
+    - **Fix**: Corrected to `sepa_pipeline...`.
+4.  **`NotNullViolation` on `id_bandera` / Location Fields**:
+    - **Issue**: Null values in required DB columns.
+    - **Fix**: Added strict null checks in `validator.py` to filter invalid rows before loading.
+5.  **`ForeignKeyViolation`**:
+    - **Issue**: `sucursales` referencing missing `comercios` and `productos` referencing missing `sucursales`.
+    - **Fix**: Implemented strict referential integrity checks in `validator.py` to **drop** orphaned records.
+
+**Current Status**:
+- The pipeline runs successfully and loads data.
+- **Known Issue**: `StringDataRightTruncation` on `sucursales_provincia` (value too long for `varchar(10)`). This is the next item to debug.
+
+**Update (2025-11-20 02:00)**:
+- **Fix**: Expanded `sucursales_provincia` to `VARCHAR(255)` in `sql/init.sql` and migrated the live DB.
+- **Result**: Pipeline successfully ingested **14,217,967** price records in ~10 minutes.
+- **Data Verification**:
+    - Comercios: 45
+    - Sucursales: 3,089
+    - Products: 88,082
+    - Prices: 14,217,967
+
