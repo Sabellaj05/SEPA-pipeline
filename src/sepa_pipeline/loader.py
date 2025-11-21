@@ -11,7 +11,9 @@ import psycopg
 
 from sepa_pipeline.config import SEPAConfig
 
-logger = logging.getLogger(__name__)
+from sepa_pipeline.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class SEPALoader:
     """Loads validated data into PostgreSQL and Parquet"""

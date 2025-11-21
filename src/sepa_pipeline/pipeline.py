@@ -10,13 +10,10 @@ import polars as pl
 from sepa_pipeline.config import SEPAConfig
 from sepa_pipeline.extractor import SEPAExtractor
 from sepa_pipeline.loader import SEPALoader
+from sepa_pipeline.utils.logger import get_logger
 from sepa_pipeline.validator import SEPAValidator, get_schema_dict
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def process_daily_data(target_date: date, config: SEPAConfig) -> None:

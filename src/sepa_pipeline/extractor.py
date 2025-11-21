@@ -8,8 +8,10 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
 from typing import Dict, List
+from sepa_pipeline.utils.logger import get_logger
+from sepa_pipeline.utils.fecha import Fecha
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class SEPAExtractor:
     """Extracts and validates SEPA ZIP files"""

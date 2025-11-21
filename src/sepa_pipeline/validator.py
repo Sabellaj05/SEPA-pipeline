@@ -7,7 +7,9 @@ from typing import Dict, Tuple
 
 import polars as pl
 
-logger = logging.getLogger(__name__)
+from sepa_pipeline.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 def get_schema_dict(table_type: str) -> Dict[str, pl.Utf8]:
     """
