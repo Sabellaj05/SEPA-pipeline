@@ -310,29 +310,46 @@ class SEPALoader:
     def append_to_parquet(
         self, df: pl.DataFrame, fecha_vigencia: date
     ) -> None:
-        """Append chunk to a single Parquet file"""
-        partition_dir = (
-            self.config.archive_dir
-            / f"year={fecha_vigencia.year}"
-            / f"month={fecha_vigencia.month:02d}"
-            / f"day={fecha_vigencia.day:02d}"
+        """Append chunk to a single Parquet file in MinIO/S3"""
+        from pyarrow import fs
+
+        # Initialize S3 Filesystem
+        s3 = fs.S3FileSystem(
+            endpoint_override=self.config.minio_endpoint,
+            access_key=self.config.minio_access_key,
+            secret_key=self.config.minio_secret_key,
+            scheme="http",  # Use https if configured
         )
-        partition_dir.mkdir(parents=True, exist_ok=True)
-        parquet_path = partition_dir / "precios.parquet"
+
+        # Define path in bucket
+        file_path = (
+            f"{self.config.minio_bucket}/bronze/precios/"
+            f"year={fecha_vigencia.year}/"
+            f"month={fecha_vigencia.month:02d}/"
+            f"day={fecha_vigencia.day:02d}/"
+            "precios.parquet"
+        )
 
         # Convert to Arrow Table
         table = df.to_arrow()
 
         if self._parquet_writer is None:
-            logger.info(f"Creating new Parquet writer for {parquet_path}")
+            logger.info(f"Creating new Parquet writer for s3://{file_path}")
+            
+            # Open output stream on S3
+            # We need to keep the file open across chunks, so we store the writer.
+            # PyArrow's ParquetWriter can take a filesystem object or an open file-like object.
+            # Passing the path and filesystem is usually easiest.
+            
             self._parquet_writer = pq.ParquetWriter(
-                parquet_path,
+                file_path,
                 table.schema,
                 compression="zstd",
+                filesystem=s3
             )
         
         self._parquet_writer.write_table(table)
-        logger.info(f"Appended {len(df)} rows to Parquet")
+        logger.info(f"Appended {len(df)} rows to Parquet (S3)")
 
     def close_parquet_writer(self) -> None:
         """Close the Parquet writer if open"""
