@@ -28,15 +28,20 @@ SEPA-pipeline/
 ├── .env                  # Local environment variables (DB credentials) - NOT COMMITTED
 ├── .gitignore
 ├── data/                 # (Output) Stores downloaded .zip files.
-├── docker-compose.yml    # Defines the PostgreSQL service.
+├── docker-compose.yml    # Defines PostgreSQL, MinIO, and setup services.
 ├── logs/                 # (Output) Contains daily log files.
 ├── sql/
 │   └── init.sql          # DDL script for creating the database schema.
 ├── src/
 │   └── sepa_pipeline/    # The main installable Python package.
 │       ├── __init__.py
+│       ├── config.py     # Configuration management.
+│       ├── extractor.py  # ZIP extraction logic.
+│       ├── loader.py     # Database loading (Postgres & MinIO).
 │       ├── main.py       # Application entry point.
-│       ├── scraper.py
+│       ├── pipeline.py   # Orchestration logic.
+│       ├── scraper.py    # Web scraping logic.
+│       ├── validator.py  # Data validation logic.
 │       └── utils/
 ├── tests/
 ├── AGENT.md             # This file.
@@ -141,3 +146,29 @@ SEPA-pipeline/
     - Products: 88,082
     - Prices: 14,217,967
 
+
+## 9. Architecture Evolution: The Lakehouse Vision
+
+The project is evolving from a single PostgreSQL database to a dual-layer architecture to handle scale and distinct workloads.
+
+### 9.1. Operational Layer (Hot Store)
+- **Purpose**: Serve real-time/interactive queries for the web frontend.
+- **Data Retention**: Recent data only (e.g., last 90 days).
+- **Tech Stack**:
+    - **API**: FastAPI (Endpoints for `/price`, `/history`).
+    - **Database**: PostgreSQL (Indexed for low-latency lookups).
+
+### 9.2. Analytical Layer (Cold Store / Lakehouse)
+- **Purpose**: Historical analysis, BI, and complex aggregations over massive datasets (~1TB/year).
+- **Tech Stack**:
+    - **Storage**: MinIO (S3-compatible object storage).
+    - **Format**: Apache Iceberg (Table format) + Parquet (File format).
+    - **Ingestion**: Python + Polars + PyIceberg.
+    - **Query Engine**: DuckDB (for ad-hoc SQL over Iceberg).
+    - **Transformation**: dbt (managing models in DuckDB/Iceberg).
+    - **BI**: Metabase (Dashboards).
+
+### 9.3. Data Flow
+1.  **Ingestion**: `scraper` -> `pipeline` (Polars) -> **Iceberg/MinIO** (Raw/Bronze & Clean/Silver).
+2.  **Operational Sync**: `pipeline` -> **PostgreSQL** (Recent data only).
+3.  **Analytics**: **DuckDB** queries **Iceberg** -> **dbt** transforms -> **Metabase** visualizes.
