@@ -1,3 +1,1 @@
-from .logger_config import logger_setup
-
-logger = logger_setup(__name__)
+from .logger_config import logger_setup as get_logger

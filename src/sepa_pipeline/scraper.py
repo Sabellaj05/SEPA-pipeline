@@ -10,7 +10,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from tqdm import tqdm
 
 from .utils.fecha import Fecha
-from .utils.logger import logger
+from .utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class SepaScraper:

@@ -43,7 +43,7 @@ CREATE TABLE sucursales (
     sucursales_barrio VARCHAR(255),
     sucursales_codigo_postal INTEGER,
     sucursales_localidad VARCHAR(255) NOT NULL,
-    sucursales_provincia VARCHAR(10) NOT NULL, -- ISO 3166-2 format (AR-B, AR-C, etc.)
+    sucursales_provincia VARCHAR(255) NOT NULL, -- ISO 3166-2 format (AR-B, AR-C, etc.)
     sucursales_lunes_horario_atencion VARCHAR(100),
     sucursales_martes_horario_atencion VARCHAR(100),
     sucursales_miercoles_horario_atencion VARCHAR(100),

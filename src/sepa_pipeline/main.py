@@ -1,7 +1,9 @@
 import asyncio
 
 from .scraper import SepaScraper
-from .utils.logger import logger
+from .utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 URL = "https://datos.produccion.gob.ar/dataset/sepa-precios"

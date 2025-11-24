@@ -28,6 +28,7 @@ share/python-wheels/
 MANIFEST
 
 # doc
+PLAN.md
 EXPLAINER.md
 PLAN.md
 
