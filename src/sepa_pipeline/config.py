@@ -29,8 +29,18 @@ class SEPAConfig:
     # raw_data_dir: Path = Path("data")
     # archive_dir: Path = Path("data/archive")
 
-    postgres_dsn: str = (
-        f"postgresql://{sepa_user}:{sepa_password}@{sepa_host}:{sepa_port}/{sepa_db}"
-    )
+    # MinIO / S3 Configuration
+    minio_endpoint: str = os.getenv("MINIO_ENDPOINT")
+    minio_access_key: str = os.getenv("MINIO_ACCESS_KEY")
+    minio_secret_key: str = os.getenv("MINIO_SECRET_KEY")
+    minio_bucket: str = os.getenv("MINIO_BUCKET")
+
+    @property
+    def postgres_dsn(self) -> str:
+        """Construct PostgreSQL DSN from environment variables."""
+        # Note: The original instruction used self.db_user etc.
+        # Assuming sepa_user etc. are the intended attributes for the DSN.
+        return f"postgresql://{self.sepa_user}:{self.sepa_password}@{self.sepa_host}:{self.sepa_port}/{self.sepa_db}"
+
     retention_days_postgres: int = 90
     max_workers: int = 8
