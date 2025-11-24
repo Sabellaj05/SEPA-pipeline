@@ -6,6 +6,7 @@ import logging
 from datetime import date, datetime
 from pathlib import Path
 
+import pyarrow.parquet as pq
 import polars as pl
 import psycopg
 
@@ -20,6 +21,7 @@ class SEPALoader:
 
     def __init__(self, config: SEPAConfig):
         self.config = config
+        self._parquet_writer = None
 
     def load_to_postgres(
         self,
@@ -48,7 +50,26 @@ class SEPALoader:
 
         logger.info(f"✅ Loaded {len(df_productos):,} price records to PostgreSQL")
 
-    def _upsert_comercios(self, df: pl.DataFrame) -> None:
+    def prepare_precios_partition(self, fecha_vigencia: date) -> None:
+        """Create and truncate the partition for the given date."""
+        partition_name = f"precios_{fecha_vigencia.strftime('%Y_%m_%d')}"
+        logger.info(f"Preparing partition {partition_name}...")
+        
+        with psycopg.connect(self.config.postgres_dsn) as conn:
+            with conn.cursor() as cur:
+                # 1. Create partition
+                cur.execute("SELECT create_precios_partition(%s)", (fecha_vigencia,))
+                
+                # 2. Truncate partition (idempotency)
+                logger.info(f"Truncating partition {partition_name}...")
+                try:
+                    cur.execute(f"TRUNCATE TABLE {partition_name}")
+                except psycopg.errors.UndefinedTable:
+                    logger.warning(f"Partition {partition_name} does not exist (unexpected), skipping truncate")
+                    
+            conn.commit()
+
+    def upsert_comercios(self, df: pl.DataFrame) -> None:
         """Upsert comercios dimension table"""
         with psycopg.connect(self.config.postgres_dsn) as conn:
             with conn.cursor() as cur:
@@ -76,9 +97,7 @@ class SEPALoader:
                             "comercio_bandera_url",
                             "comercio_version_sepa",
                         ]
-                    ).rows()  # no need for numpy here
-                    # .to_numpy()
-                    # .tolist()
+                    ).rows()
                 )
 
                 cur.executemany(insert_sql, records)
@@ -86,7 +105,7 @@ class SEPALoader:
 
         logger.info(f"Upserted {len(df)} comercio records")
 
-    def _upsert_sucursales(self, df: pl.DataFrame) -> None:
+    def upsert_sucursales(self, df: pl.DataFrame) -> None:
         """Upsert sucursales dimension table (safe, non-destructive)."""
         if df is None or df.height == 0:
             logger.info("No sucursales to upsert")
@@ -160,7 +179,7 @@ class SEPALoader:
 
         logger.info(f"Upserted {len(records)} sucursal records")
 
-    def _upsert_productos_master(self, df: pl.DataFrame) -> None:
+    def upsert_productos_master(self, df: pl.DataFrame) -> None:
         """Upsert productos_master table (populate basic master records)."""
         if df is None or df.height == 0:
             logger.info("No productos to upsert")
@@ -228,7 +247,7 @@ class SEPALoader:
 
         logger.info(f"Upserted {len(records)} unique products into productos_master")
 
-    def _bulk_load_precios(
+    def bulk_load_precios(
         self, df: pl.DataFrame, scraped_at: datetime, fecha_vigencia: date
     ) -> None:
         """Bulk load precios using PostgreSQL COPY"""
@@ -288,10 +307,10 @@ class SEPALoader:
 
         temp_csv.unlink()
 
-    def archive_to_parquet(
-        self, df_productos: pl.DataFrame, fecha_vigencia: date
+    def append_to_parquet(
+        self, df: pl.DataFrame, fecha_vigencia: date
     ) -> None:
-        """Archive data to Parquet files"""
+        """Append chunk to a single Parquet file"""
         partition_dir = (
             self.config.archive_dir
             / f"year={fecha_vigencia.year}"
@@ -299,13 +318,25 @@ class SEPALoader:
             / f"day={fecha_vigencia.day:02d}"
         )
         partition_dir.mkdir(parents=True, exist_ok=True)
-
         parquet_path = partition_dir / "precios.parquet"
-        df_productos.write_parquet(
-            parquet_path,
-            compression="zstd",
-            statistics=True,
-        )
 
-        file_size_mb = parquet_path.stat().st_size / (1024 * 1024)
-        logger.info(f"✅ Archived to {parquet_path} ({file_size_mb:.2f} MB)")
+        # Convert to Arrow Table
+        table = df.to_arrow()
+
+        if self._parquet_writer is None:
+            logger.info(f"Creating new Parquet writer for {parquet_path}")
+            self._parquet_writer = pq.ParquetWriter(
+                parquet_path,
+                table.schema,
+                compression="zstd",
+            )
+        
+        self._parquet_writer.write_table(table)
+        logger.info(f"Appended {len(df)} rows to Parquet")
+
+    def close_parquet_writer(self) -> None:
+        """Close the Parquet writer if open"""
+        if self._parquet_writer:
+            self._parquet_writer.close()
+            self._parquet_writer = None
+            logger.info("Closed Parquet writer")
