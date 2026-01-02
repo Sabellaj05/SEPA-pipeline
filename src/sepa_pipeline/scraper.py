@@ -6,7 +6,7 @@ from typing import Optional, Self
 
 import httpx
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 from tqdm import tqdm
 
 from .utils.fecha import Fecha
@@ -230,7 +230,12 @@ class SepaScraper:
             min_file_size_mb: Minimum file size in MB to consider the download
                 successful
         """
-        response = await self._connect_to_source()
+        try:
+            response = await self._connect_to_source()
+        except RetryError:
+            logger.error("Failed to connect to source after multiple attempts. Aborting.")
+            return False
+
         if not response:
             logger.error("Failed to connect to source, aborting.")
             return False
