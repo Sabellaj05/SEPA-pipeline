@@ -179,18 +179,26 @@ The project is evolving from a single PostgreSQL database to a dual-layer archit
 - **Dependencies**: Added `pyiceberg[duckdb,s3fs,sql-postgres]` to `pyproject.toml`.
 - **Config**: Updated `SEPAConfig` to include `iceberg_catalog_config` property.
 - **Loader**: Enhanced `SEPALoader` to initializing PyIceberg Catalog and append data.
-- **Pipeline**: Integrated the Iceberg writing step into the main `process_daily_data` flow.
+- **Pipeline**: Integrated the Iceberg writing step to `pipeline.py`.
 
 **Bugs Fixed**:
-1.  **`AWS Error ACCESS_DENIED` (HeadObject)**:
-    - **Issue**: PyIceberg failed to connect to local MinIO container, returning `ACCESS_DENIED`.
-    - **Root Cause 1**: `config.py` was reading `MINIO_ACCESS_KEY` which was missing from `.env` (passed as `None`), instead of falling back to `MINIO_USER` which contained the credentials.
-    - **Root Cause 2**: MinIO strictly requires AWS Signature Version 4 (`s3v4`), but PyIceberg/PyArrow defaults didn't enforce it for the custom endpoint.
-    - **Fix**: 
-        1. Updated `config.py` to fallback to `os.getenv("MINIO_USER")`.
-        2. Added `"s3.signer": "s3v4"` to the catalog config.
-        3. Enforced `"s3.region": "us-east-1"` to prevent resolution errors.
+1.  **`AWS Error ACCESS_DENIED`**:
+    - **Issue**: PyIceberg failed to connect to local MinIO container.
+    - **Fix**: Added `"s3.signer": "s3v4"`, `"s3.region": "us-east-1"` to catalog config, and fixed credential loading.
 
-**Current Status**:
-- **Pipeline**: Successfully loads data to both PostgreSQL (Operational) and MinIO/Iceberg (Analytical).
-- **Verification**: Loaded ~14.6M rows for 2026-01-03 run.
+### 2026-01-03: Lakehouse Phase 3 - Bronze Layer Decoupling
+
+**Goal**: Move to a "Cloud-Native" architecture where Ingestion (Scraper) and Processing (Pipeline) are decoupled via S3/MinIO.
+
+**Key Changes**:
+*   **`src/sepa_pipeline/scraper.py`**: Now uploads Raw ZIPs directly to `s3://sepa-lakehouse/bronze/raw` immediately after download.
+*   **`src/sepa_pipeline/extractor.py`**: Added `fetch_from_bronze` to download and unzip the Master ZIP from S3, becoming the new pipeline entry point.
+*   **`src/sepa_pipeline/pipeline.py`**: Orchestrates the new flow: Fetch (S3) -> Extract -> Load.
+*   **Standard Bronze (Parquet)**: Restored raw-but-structured Parquet file generation to `bronze/parquets` for easy auditing.
+
+**Bugs Fixed**:
+*   **`pyarrow.fs.copy_file` API Error**: Replaced high-level copy methods with manual `open_input_stream` / `open_output_stream` in both Scraper and Extractor to ensure robust file transfers across PyArrow versions.
+
+**Verification Status**:
+*   **Pipeline Run**: Successfully processed **14,653,976 records** from end-to-end.
+*   **Storage**: Validated data presence in both Iceberg table and MinIO buckets.
