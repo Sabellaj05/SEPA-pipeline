@@ -403,6 +403,7 @@ class SEPALoader:
             access_key=self.config.minio_access_key,
             secret_key=self.config.minio_secret_key,
             scheme="http",  # Use https if configured
+            region="us-east-1", # Required for MinIO compatibility
         )
 
         # Define path in bucket
