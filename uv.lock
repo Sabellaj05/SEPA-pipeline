@@ -229,6 +229,20 @@ wheels = [
 ]
 
 [[package]]
+name = "boto3"
+version = "1.40.70"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+    { name = "jmespath" },
+    { name = "s3transfer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/37/12/d5ac34e0536e1914dde28245f014a635056dde0427f6efa09f104d7999f4/boto3-1.40.70.tar.gz", hash = "sha256:191443707b391232ed15676bf6bba7e53caec1e71aafa12ccad2e825c5ee15cc", size = 111638, upload-time = "2025-11-10T20:29:15.199Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f3/cf/e24d08b37cd318754a8e94906c8b34b88676899aad1907ff6942311f13c4/boto3-1.40.70-py3-none-any.whl", hash = "sha256:e8c2f4f4cb36297270f1023ebe5b100333e0e88ab6457a9687d80143d2e15bf9", size = 139358, upload-time = "2025-11-10T20:29:13.512Z" },
+]
+
+[[package]]
 name = "botocore"
 version = "1.40.70"
 source = { registry = "https://pypi.org/simple" }
@@ -1595,11 +1609,24 @@ wheels = [
 ]
 
 [[package]]
+name = "s3transfer"
+version = "0.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/62/74/8d69dcb7a9efe8baa2046891735e5dfe433ad558ae23d9e3c14c633d1d58/s3transfer-0.14.0.tar.gz", hash = "sha256:eff12264e7c8b4985074ccce27a3b38a485bb7f7422cc8046fee9be4983e4125", size = 151547, upload-time = "2025-09-09T19:23:31.089Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/f0/ae7ca09223a81a1d890b2557186ea015f6e0502e9b8cb8e1813f1d8cfa4e/s3transfer-0.14.0-py3-none-any.whl", hash = "sha256:ea3b790c7077558ed1f02a3072fb3cb992bbbd253392f4b6e9e8976941c7d456", size = 85712, upload-time = "2025-09-09T19:23:30.041Z" },
+]
+
+[[package]]
 name = "sepa-pipeline"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
+    { name = "boto3" },
     { name = "httpx" },
     { name = "minio" },
     { name = "polars", extra = ["pyarrow"] },
@@ -1625,11 +1652,12 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.13.3,<5.0.0" },
+    { name = "boto3", specifier = ">=1.40.70" },
     { name = "httpx", specifier = ">=0.28.1,<0.29.0" },
     { name = "minio", specifier = ">=7.2.18" },
     { name = "polars", extras = ["pyarrow"], specifier = ">=1.35.2" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.12" },
-    { name = "pyiceberg", extras = ["duckdb", "s3fs", "sql-postgres", "sqlalchemy"], specifier = ">=0.10.0" },
+    { name = "pyiceberg", extras = ["duckdb", "s3fs", "sql-postgres"], specifier = ">=0.10.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "tenacity", specifier = ">=9.1.2,<10.0.0" },
     { name = "tqdm", specifier = ">=4.67.1,<5.0.0" },
