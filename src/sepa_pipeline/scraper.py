@@ -11,6 +11,8 @@ from tqdm import tqdm
 
 from .utils.fecha import Fecha
 from .utils.logger import get_logger
+from sepa_pipeline.config import SEPAConfig
+from pyarrow import fs
 
 logger = get_logger(__name__)
 
@@ -246,4 +248,54 @@ class SepaScraper:
             logger.error(f"No download link found for {day_name} ({self.fecha.hoy})")
             return False
 
-        return await self._download_data(download_link, min_file_size_mb)
+        success = await self._download_data(download_link, min_file_size_mb)
+        
+        if success:
+             # Upload to Bronze Layer (MinIO)
+             try:
+                 file_name = self._storage_filename()
+                 local_path = self.data_dir / file_name
+                 self.upload_to_bronze(local_path)
+             except Exception as e:
+                 logger.error(f"Failed to upload to Bronze layer: {e}")
+                 # We don't return False here because the download itself was successful,
+                 # and for local dev we might continue. In strict cloud, this might be fatal.
+        
+        return success
+
+    def upload_to_bronze(self, local_path: Path) -> None:
+        """Upload the raw ZIP file to MinIO (Bronze Layer)."""
+        logger.info(f"Uploading {local_path} to Bronze Layer (MinIO)...")
+        
+        config = SEPAConfig()
+        
+        # Initialize S3 Filesystem
+        s3 = fs.S3FileSystem(
+            endpoint_override=config.minio_endpoint,
+            access_key=config.minio_access_key,
+            secret_key=config.minio_secret_key,
+            scheme="http",
+            region="us-east-1",
+        )
+
+        # Define path: bronze/raw/YYYY/MM/DD/filename.zip
+        # We use the date from 'self.fecha.ahora' which is a datetime object.
+        date_path = self.fecha.ahora
+        
+        s3_path = (
+            f"{config.minio_bucket}/bronze/raw/"
+            f"year={date_path.year}/"
+            f"month={date_path.month:02d}/"
+            f"day={date_path.day:02d}/"
+            f"{local_path.name}"
+        )
+        
+        # Ensure directory structure exists (S3 doesn't strictly need this but good for some clients)
+        logger.info(f"Destination: s3://{s3_path}")
+        
+        # Manually stream the file to avoid API version issues with fs.copy_file
+        with open(local_path, "rb") as source:
+            with s3.open_output_stream(s3_path) as dest:
+                dest.write(source.read())
+        
+        logger.info("✅ Upload to Bronze Layer successful")

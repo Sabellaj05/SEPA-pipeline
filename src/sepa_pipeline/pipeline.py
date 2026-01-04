@@ -20,10 +20,21 @@ def process_daily_data(target_date: date, config: SEPAConfig) -> None:
     """Main pipeline: Extract → Validate → Load → Archive"""
     scraped_at = datetime.now()
 
-    # Step 1: Extract all ZIP files
+    # Step 1: Fetch and Extract (Cloud Native Flow)
     logger.info(f"Starting SEPA pipeline for {target_date}")
     extractor = SEPAExtractor()
-    all_csv_paths = extractor.extract_all_zips(config.raw_data_dir, target_date)
+    
+    # 1. Fetch Master ZIP from Bronze (MinIO)
+    try:
+        raw_zip_dir = extractor.fetch_from_bronze(target_date, config)
+    except Exception as e:
+        logger.error(f"Failed to fetch from Bronze Layer: {e}")
+        # Build robustness: In a real scenario, we might trigger the scraper here if missing,
+        # or fail. For now, we raise to ensure the architecture is respected.
+        raise
+
+    # 2. Extract child ZIPs
+    all_csv_paths = extractor.extract_all_zips(raw_zip_dir)
 
     # Initialize loader
     loader = SEPALoader(config)
