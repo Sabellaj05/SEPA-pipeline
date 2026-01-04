@@ -171,4 +171,26 @@ The project is evolving from a single PostgreSQL database to a dual-layer archit
 ### 9.3. Data Flow
 1.  **Ingestion**: `scraper` -> `pipeline` (Polars) -> **Iceberg/MinIO** (Raw/Bronze & Clean/Silver).
 2.  **Operational Sync**: `pipeline` -> **PostgreSQL** (Recent data only).
-3.  **Analytics**: **DuckDB** queries **Iceberg** -> **dbt** transforms -> **Metabase** visualizes.
+### 2026-01-03: Lakehouse Phase 2 - Iceberg Integration (Silver Layer)
+
+**Goal**: Load daily price data into an Apache Iceberg table (`sepa.precios`) stored in MinIO.
+
+**Major Changes**:
+- **Dependencies**: Added `pyiceberg[duckdb,s3fs,sql-postgres]` to `pyproject.toml`.
+- **Config**: Updated `SEPAConfig` to include `iceberg_catalog_config` property.
+- **Loader**: Enhanced `SEPALoader` to initializing PyIceberg Catalog and append data.
+- **Pipeline**: Integrated the Iceberg writing step into the main `process_daily_data` flow.
+
+**Bugs Fixed**:
+1.  **`AWS Error ACCESS_DENIED` (HeadObject)**:
+    - **Issue**: PyIceberg failed to connect to local MinIO container, returning `ACCESS_DENIED`.
+    - **Root Cause 1**: `config.py` was reading `MINIO_ACCESS_KEY` which was missing from `.env` (passed as `None`), instead of falling back to `MINIO_USER` which contained the credentials.
+    - **Root Cause 2**: MinIO strictly requires AWS Signature Version 4 (`s3v4`), but PyIceberg/PyArrow defaults didn't enforce it for the custom endpoint.
+    - **Fix**: 
+        1. Updated `config.py` to fallback to `os.getenv("MINIO_USER")`.
+        2. Added `"s3.signer": "s3v4"` to the catalog config.
+        3. Enforced `"s3.region": "us-east-1"` to prevent resolution errors.
+
+**Current Status**:
+- **Pipeline**: Successfully loads data to both PostgreSQL (Operational) and MinIO/Iceberg (Analytical).
+- **Verification**: Loaded ~14.6M rows for 2026-01-03 run.
