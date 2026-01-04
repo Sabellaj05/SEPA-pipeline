@@ -374,7 +374,7 @@ class SEPAValidator:
         if after < before:
             logger.warning(
                 f"validate_productos: filtered out {before - after}"
-                "rows missing essential fields after soft-cast"
+                " rows missing essential fields after soft-cast"
             )
 
         # Filter non-positive prices but keep rows with price <= 0 only

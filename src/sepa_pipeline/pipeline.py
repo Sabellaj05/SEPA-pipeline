@@ -152,8 +152,8 @@ def process_daily_data(target_date: date, config: SEPAConfig) -> None:
                 # Load Prices
                 loader.bulk_load_precios(df_producto, scraped_at, target_date)
                 
-                # Archive to Parquet (Chunked)
-                loader.append_to_parquet(df_producto, target_date)
+                # Archive to Iceberg (Silver Layer)
+                loader.append_to_iceberg(df_producto, scraped_at, target_date)
                 
                 total_prices_loaded += df_producto.height
             
@@ -162,13 +162,13 @@ def process_daily_data(target_date: date, config: SEPAConfig) -> None:
             # Continue to next chunk instead of crashing entire pipeline?
             # For now, let's log and continue.
 
-    loader.close_parquet_writer()
+    # loader.close_parquet_writer() # Not needed for Iceberg (appends are atomic/committed per chunk or handle differently)
     logger.info(f"✅ Pipeline completed successfully for {target_date}. Total prices loaded: {total_prices_loaded:,}")
 
 
 if __name__ == "__main__":
     config = SEPAConfig()
     # Should be the current date
-    target_date = date(2025, 11, 23)
+    target_date = date(2026, 1, 3)
 
     process_daily_data(target_date, config)

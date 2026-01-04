@@ -9,6 +9,8 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import polars as pl
 import psycopg
+from pyiceberg.catalog import load_catalog
+from pyiceberg.exceptions import NoSuchTableError
 
 from sepa_pipeline.config import SEPAConfig
 
@@ -22,6 +24,14 @@ class SEPALoader:
     def __init__(self, config: SEPAConfig):
         self.config = config
         self._parquet_writer = None
+        
+        # Initialize Iceberg Catalog
+        try:
+            self.catalog = load_catalog("default", **self.config.iceberg_catalog_config)
+            self._iceberg_table = None
+        except Exception as e:
+            logger.warning(f"Failed to initialize Iceberg Catalog: {e}")
+            self.catalog = None
 
     def load_to_postgres(
         self,
@@ -69,15 +79,76 @@ class SEPALoader:
                     
             conn.commit()
 
+    def _ensure_iceberg_table(self, df: pl.DataFrame) -> None:
+        """Ensure the Iceberg table exists, creating it if necessary."""
+        if self._iceberg_table:
+            return
+
+        if not self.catalog:
+            logger.error("Iceberg catalog not initialized, cannot create table")
+            return
+
+        table_identifier = "sepa.precios"
+        try:
+            self._iceberg_table = self.catalog.load_table(table_identifier)
+            logger.info(f"Loaded existing Iceberg table: {table_identifier}")
+        except NoSuchTableError:
+            logger.info(f"Iceberg table {table_identifier} not found, creating from schema...")
+            
+            # Use the dataframe schema to create the table
+            arrow_table = df.to_arrow()
+            
+            # Create namespace if it doesn't exist (e.g. 'sepa')
+            try:
+                self.catalog.create_namespace("sepa")
+            except Exception:
+                pass # Namespace might exist or error ignored
+            
+            self._iceberg_table = self.catalog.create_table(
+                table_identifier,
+                schema=arrow_table.schema,
+                # location=... # Optional, catalog handles it based on warehouse config
+            )
+            logger.info(f"✅ Created Iceberg table: {table_identifier}")
+
+    def append_to_iceberg(self, df: pl.DataFrame, scraped_at: datetime, fecha_vigencia: date) -> None:
+        """Append a chunk of data to the Iceberg table."""
+        if not self.catalog:
+             logger.warning("Skipping Iceberg append (catalog not init)")
+             return
+             
+        # Enrich DataFrame with timestamps (same as bulk_load_precios)
+        df = df.with_columns([
+            pl.lit(scraped_at).alias("scraped_at"),
+            pl.lit(fecha_vigencia).alias("fecha_vigencia"),
+        ])
+
+        # Ensure table exists (lazy load)
+        self._ensure_iceberg_table(df)
+        
+        if self._iceberg_table:
+            logger.info(f"Appending {len(df)} rows to Iceberg table...")
+            self._iceberg_table.append(df.to_arrow())
+        else:
+            logger.error("Failed to load/create Iceberg table, skipping append")
+
     def upsert_comercios(self, df: pl.DataFrame) -> None:
         """Upsert comercios dimension table"""
+        self._upsert_comercios(df) # Call internal method
+
+    def _upsert_comercios(self, df: pl.DataFrame) -> None:
+        """Upsert comercios dimension table (Internal)"""
+        if df is None or df.height == 0:
+            return
+            
         with psycopg.connect(self.config.postgres_dsn) as conn:
             with conn.cursor() as cur:
                 insert_sql = """
                     INSERT INTO comercios (
                         id_comercio, id_bandera, comercio_cuit, comercio_razon_social,
-                        comercio_bandera_nombre, comercio_bandera_url, comercio_version_sepa
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        comercio_bandera_nombre, comercio_bandera_url, comercio_version_sepa,
+                        updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
                     ON CONFLICT (id_comercio, id_bandera)
                     DO UPDATE SET
                         comercio_razon_social = EXCLUDED.comercio_razon_social,
@@ -106,7 +177,10 @@ class SEPALoader:
         logger.info(f"Upserted {len(df)} comercio records")
 
     def upsert_sucursales(self, df: pl.DataFrame) -> None:
-        """Upsert sucursales dimension table (safe, non-destructive)."""
+        self._upsert_sucursales(df)
+
+    def _upsert_sucursales(self, df: pl.DataFrame) -> None:
+        """Upsert sucursales dimension table."""
         if df is None or df.height == 0:
             logger.info("No sucursales to upsert")
             return
@@ -179,7 +253,7 @@ class SEPALoader:
 
         logger.info(f"Upserted {len(records)} sucursal records")
 
-    def upsert_productos_master(self, df: pl.DataFrame) -> None:
+    def _upsert_productos_master(self, df: pl.DataFrame) -> None:
         """Upsert productos_master table (populate basic master records)."""
         if df is None or df.height == 0:
             logger.info("No productos to upsert")
@@ -225,9 +299,11 @@ class SEPALoader:
                 productos_unidad_medida_presentacion,
                 productos_marca,
                 productos_cantidad_referencia,
-                productos_unidad_medida_referencia
+                productos_unidad_medida_referencia,
+                updated_at
             ) VALUES (
-                {", ".join(["%s"] * len(expected_cols))}
+                {", ".join(["%s"] * len(expected_cols))},
+                NOW()
             )
             ON CONFLICT (id_producto)
             DO UPDATE SET
@@ -246,8 +322,16 @@ class SEPALoader:
                 conn.commit()
 
         logger.info(f"Upserted {len(records)} unique products into productos_master")
+    
+    def upsert_productos_master(self, df: pl.DataFrame) -> None:
+        self._upsert_productos_master(df)
 
     def bulk_load_precios(
+        self, df: pl.DataFrame, scraped_at: datetime, fecha_vigencia: date
+    ) -> None:
+        return self._bulk_load_precios(df, scraped_at, fecha_vigencia)
+
+    def _bulk_load_precios(
         self, df: pl.DataFrame, scraped_at: datetime, fecha_vigencia: date
     ) -> None:
         """Bulk load precios using PostgreSQL COPY"""
