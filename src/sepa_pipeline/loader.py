@@ -131,8 +131,12 @@ class SEPALoader:
              return
              
         # Enrich DataFrame with timestamps (same as bulk_load_precios)
+        # Fix: The table schema expects 'timestamp' (naive), but Fecha().ahora returns 'timestamptz' (aware).
+        # We assume the "local" time in AR is what we want to store as the naive timestamp value.
+        scraped_at_naive = scraped_at.replace(tzinfo=None) if scraped_at.tzinfo else scraped_at
+        
         df = df.with_columns([
-            pl.lit(scraped_at).alias("scraped_at"),
+            pl.lit(scraped_at_naive).alias("scraped_at"),
             pl.lit(fecha_vigencia).alias("fecha_vigencia"),
         ])
 

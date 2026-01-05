@@ -11,6 +11,7 @@ from sepa_pipeline.config import SEPAConfig
 from sepa_pipeline.extractor import SEPAExtractor
 from sepa_pipeline.loader import SEPALoader
 from sepa_pipeline.utils.logger import get_logger
+from sepa_pipeline.utils.fecha import Fecha
 from sepa_pipeline.validator import SEPAValidator, get_schema_dict
 
 logger = get_logger(__name__)
@@ -18,7 +19,8 @@ logger = get_logger(__name__)
 
 def process_daily_data(target_date: date, config: SEPAConfig) -> None:
     """Main pipeline: Extract → Validate → Load → Archive"""
-    scraped_at = datetime.now()
+    # AR timezone now
+    scraped_at = Fecha().ahora
 
     # Step 1: Fetch and Extract (Cloud Native Flow)
     logger.info(f"Starting SEPA pipeline for {target_date}")
@@ -183,6 +185,6 @@ def process_daily_data(target_date: date, config: SEPAConfig) -> None:
 if __name__ == "__main__":
     config = SEPAConfig()
     # Should be the current date
-    target_date = date(2026, 1, 4)
+    target_date = date(2026, 1, 5)
 
     process_daily_data(target_date, config)

@@ -12,8 +12,8 @@ DATA_DIR = "data"
 
 async def main() -> int:
     """
-    Main entry point
-    Initializes and runs the scraper, then logs the outcome.
+    Initializes and runs the scraper, uploads the raw files to the bronze layer
+    then logs the outcome.
     """
     logger.info("=== Starting new scraping session ===")
 
