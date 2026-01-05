@@ -99,6 +99,7 @@ class SEPAValidator:
         "hiper",
         "hipermercado local",
         "autoservicio exprés",
+        "autoservicio expres",
         "tienda virtual",
         "tienda fisica",
     }
@@ -129,16 +130,7 @@ class SEPAValidator:
     @staticmethod
     def validate_comercio(df: pl.DataFrame) -> pl.DataFrame:
         """Validate comercio.csv schema and data (soft validation)."""
-        required_cols = [
-            "id_comercio",
-            "id_bandera",
-            "comercio_cuit",
-            "comercio_razon_social",
-            "comercio_bandera_nombre",
-            "comercio_bandera_url",
-            "comercio_ultima_actualizacion",
-            "comercio_version_sepa",
-        ]
+        required_cols = list(get_schema_dict("comercio").keys())
 
         missing = set(required_cols) - set(df.columns)
         if missing:
@@ -198,15 +190,7 @@ class SEPAValidator:
     @staticmethod
     def validate_sucursales(df: pl.DataFrame) -> pl.DataFrame:
         """Validate sucursales.csv schema and data (soft validation)."""
-        required_cols = [
-            "id_comercio",
-            "id_bandera",
-            "id_sucursal",
-            "sucursales_nombre",
-            "sucursales_tipo",
-            "sucursales_localidad",
-            "sucursales_provincia",
-        ]
+        required_cols = list(get_schema_dict("sucursales").keys())
 
         missing = set(required_cols) - set(df.columns)
         if missing:
@@ -300,16 +284,7 @@ class SEPAValidator:
     @staticmethod
     def validate_productos(df: pl.DataFrame) -> pl.DataFrame:
         """Validate productos.csv schema and data (soft validation)."""
-        required_cols = [
-            "id_comercio",
-            "id_bandera",
-            "id_sucursal",
-            "id_producto",
-            "productos_ean",
-            "productos_descripcion",
-            "productos_marca",
-            "productos_precio_lista",
-        ]
+        required_cols = list(get_schema_dict("productos").keys())
 
         missing = set(required_cols) - set(df.columns)
         if missing:

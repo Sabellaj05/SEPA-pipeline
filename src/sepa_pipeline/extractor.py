@@ -43,6 +43,54 @@ class SEPAExtractor:
         return csv_paths
 
     @staticmethod
+    def extract_all_zips(source_dir: Path, target_date: date = None) -> List[Dict[str, Path]]:
+        """
+        Extract all ZIP files from a source directory in parallel.
+        If target_date is None, source_dir is treated as the directory containing zips.
+        """
+        if target_date:
+            # Legacy/Local mode: construct path from data_dir + date
+            date_dir = source_dir / target_date.isoformat()
+            if not date_dir.exists():
+                # Allow for the case where source_dir IS the date dir
+                if source_dir.name == target_date.isoformat():
+                     date_dir = source_dir
+                else: 
+                     raise FileNotFoundError(f"No data directory for {target_date} in {source_dir}")
+        else:
+            # Cloud mode: source_dir IS the directory containing zips
+            date_dir = source_dir
+
+        if not date_dir.exists():
+             raise FileNotFoundError(f"Source directory does not exist: {date_dir}")
+
+        zip_files = sorted(date_dir.glob("sepa_*.zip"))
+        logger.info(f"Found {len(zip_files)} ZIP files in {date_dir}")
+
+        extract_dir = date_dir / "extracted_csvs"
+        extract_dir.mkdir(parents=True, exist_ok=True)
+
+        all_csv_paths = []
+        with ProcessPoolExecutor(max_workers=8) as executor:
+            futures = {
+                executor.submit(
+                    SEPAExtractor.extract_zip, zip_path, extract_dir
+                ): zip_path
+                for zip_path in zip_files
+            }
+
+            for future in as_completed(futures):
+                zip_path = futures[future]
+                try:
+                    csv_paths = future.result()
+                    all_csv_paths.append(csv_paths)
+                except Exception as e:
+                    logger.error(f"Failed to extract {zip_path.name}: {e}")
+                    raise
+
+        return all_csv_paths
+
+    @staticmethod
     def fetch_from_bronze(target_date: date, config: SEPAConfig) -> Path:
         """
         Download the Master ZIP from MinIO (Bronze Layer) and unzip it to a temp dir.
@@ -106,53 +154,5 @@ class SEPAExtractor:
         if not child_zips:
             raise ValueError("No child ZIPs found in the downloaded Master ZIP")
             
-        # Return the parent directory of the found zips (assuming they are in one dir)
+        # Return the parent directory of the found zips (assuming they are in one dir) --> they are unless source changes it
         return child_zips[0].parent
-
-    @staticmethod
-    def extract_all_zips(source_dir: Path, target_date: date = None) -> List[Dict[str, Path]]:
-        """
-        Extract all ZIP files from a source directory in parallel.
-        If target_date is None, source_dir is treated as the directory containing zips.
-        """
-        if target_date:
-            # Legacy/Local mode: construct path from data_dir + date
-            date_dir = source_dir / target_date.isoformat()
-            if not date_dir.exists():
-                # Allow for the case where source_dir IS the date dir
-                if source_dir.name == target_date.isoformat():
-                     date_dir = source_dir
-                else: 
-                     raise FileNotFoundError(f"No data directory for {target_date} in {source_dir}")
-        else:
-            # Cloud mode: source_dir IS the directory containing zips
-            date_dir = source_dir
-
-        if not date_dir.exists():
-             raise FileNotFoundError(f"Source directory does not exist: {date_dir}")
-
-        zip_files = sorted(date_dir.glob("sepa_*.zip"))
-        logger.info(f"Found {len(zip_files)} ZIP files in {date_dir}")
-
-        extract_dir = date_dir / "extracted_csvs"
-        extract_dir.mkdir(parents=True, exist_ok=True)
-
-        all_csv_paths = []
-        with ProcessPoolExecutor(max_workers=8) as executor:
-            futures = {
-                executor.submit(
-                    SEPAExtractor.extract_zip, zip_path, extract_dir
-                ): zip_path
-                for zip_path in zip_files
-            }
-
-            for future in as_completed(futures):
-                zip_path = futures[future]
-                try:
-                    csv_paths = future.result()
-                    all_csv_paths.append(csv_paths)
-                except Exception as e:
-                    logger.error(f"Failed to extract {zip_path.name}: {e}")
-                    raise
-
-        return all_csv_paths

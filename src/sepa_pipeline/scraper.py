@@ -298,4 +298,4 @@ class SepaScraper:
             with s3.open_output_stream(s3_path) as dest:
                 dest.write(source.read())
         
-        logger.info("✅ Upload to Bronze Layer successful")
+        logger.info("Upload to Bronze Layer successful")

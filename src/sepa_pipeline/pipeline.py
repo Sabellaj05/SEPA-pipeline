@@ -183,6 +183,6 @@ def process_daily_data(target_date: date, config: SEPAConfig) -> None:
 if __name__ == "__main__":
     config = SEPAConfig()
     # Should be the current date
-    target_date = date(2026, 1, 3)
+    target_date = date(2026, 1, 4)
 
     process_daily_data(target_date, config)
