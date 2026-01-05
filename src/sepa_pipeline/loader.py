@@ -13,6 +13,7 @@ from pyiceberg.catalog import load_catalog
 from pyiceberg.exceptions import NoSuchTableError
 from pyiceberg.partitioning import PartitionSpec, PartitionField
 from pyiceberg.transforms import DayTransform
+from pyiceberg.expressions import EqualTo
 
 from sepa_pipeline.config import SEPAConfig
 
@@ -123,6 +124,31 @@ class SEPALoader:
             except Exception as e:
                 logger.error(f"Failed to set partition spec: {e}")
                 # We don't raise here to allow data loading to proceed (unpartitioned backup)
+
+    def cleanup_iceberg_partition(self, fecha_vigencia: date) -> None:
+        """
+        Delete all data for a specific date partition to ensure idempotency.
+        This enables a 'Overwrite (Delete + Append)' strategy for chunked loading.
+        """
+        table_identifier = "sepa.precios"
+        if not self._iceberg_table:
+             # Try to load if not already loaded, but don't create
+            try:
+                if self.catalog:
+                    self._iceberg_table = self.catalog.load_table(table_identifier)
+            except NoSuchTableError:
+                logger.info(f"Table {table_identifier} does not exist, skipping cleanup.")
+                return
+
+        if self._iceberg_table:
+            logger.info(f"Cleaning up existing data for date: {fecha_vigencia}")
+            try:
+                # Use PyIceberg expression to delete matching rows
+                self._iceberg_table.delete(delete_filter=EqualTo("fecha_vigencia", fecha_vigencia))
+                logger.info("Cleanup complete.")
+            except Exception as e:
+                logger.error(f"Failed to cleanup partition: {e}")
+                raise
 
     def append_to_iceberg(self, df: pl.DataFrame, scraped_at: datetime, fecha_vigencia: date) -> None:
         """Append a chunk of data to the Iceberg table."""

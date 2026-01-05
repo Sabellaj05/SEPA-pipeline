@@ -124,6 +124,8 @@ def process_daily_data(target_date: date, config: SEPAConfig) -> None:
     # --- Phase 2: Prepare Partition ---
     logger.info("Phase 2: Preparing Precios Partition")
     loader.prepare_precios_partition(target_date)
+    # Ensure Iceberg idempotency (overwrite strategy)
+    loader.cleanup_iceberg_partition(target_date)
 
     # --- Phase 3: Chunked Product & Price Loading ---
     logger.info("Phase 3: Loading Products and Prices (Chunked)")
