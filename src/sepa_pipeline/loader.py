@@ -11,6 +11,8 @@ import polars as pl
 import psycopg
 from pyiceberg.catalog import load_catalog
 from pyiceberg.exceptions import NoSuchTableError
+from pyiceberg.partitioning import PartitionSpec, PartitionField
+from pyiceberg.transforms import DayTransform
 
 from sepa_pipeline.config import SEPAConfig
 
@@ -97,6 +99,7 @@ class SEPALoader:
             
             # Use the dataframe schema to create the table
             arrow_table = df.to_arrow()
+            # Note: We pass the Arrow schema directly. PyIceberg assigns field IDs.
             
             # Create namespace if it doesn't exist (e.g. 'sepa')
             try:
@@ -104,12 +107,22 @@ class SEPALoader:
             except Exception:
                 pass # Namespace might exist or error ignored
             
+            # 1. Create unpartitioned table first
             self._iceberg_table = self.catalog.create_table(
                 table_identifier,
                 schema=arrow_table.schema,
-                # location=... # Optional, catalog handles it based on warehouse config
             )
-            logger.info(f"✅ Created Iceberg table: {table_identifier}")
+            logger.info(f"Created base Iceberg table: {table_identifier}")
+
+            # 2. Update Partition Spec: Day(fecha_vigencia)
+            # This is safer than defining it at creation for fresh schemas without IDs
+            try:
+                with self._iceberg_table.update_spec() as update:
+                    update.add_field("fecha_vigencia", DayTransform(), partition_field_name="fecha_vigencia_day")
+                logger.info("Updated partition spec: Day(fecha_vigencia)")
+            except Exception as e:
+                logger.error(f"Failed to set partition spec: {e}")
+                # We don't raise here to allow data loading to proceed (unpartitioned backup)
 
     def append_to_iceberg(self, df: pl.DataFrame, scraped_at: datetime, fecha_vigencia: date) -> None:
         """Append a chunk of data to the Iceberg table."""

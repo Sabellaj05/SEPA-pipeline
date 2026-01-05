@@ -200,5 +200,18 @@ The project is evolving from a single PostgreSQL database to a dual-layer archit
 *   **`pyarrow.fs.copy_file` API Error**: Replaced high-level copy methods with manual `open_input_stream` / `open_output_stream` in both Scraper and Extractor to ensure robust file transfers across PyArrow versions.
 
 **Verification Status**:
-*   **Pipeline Run**: Successfully processed **14,653,976 records** from end-to-end.
+*   **Pipeline Run**: Successfully processed **14,371,731 records** from end-to-end (matches Postgres).
 *   **Storage**: Validated data presence in both Iceberg table and MinIO buckets.
+
+### 2026-01-04: Lakehouse Phase 3b - Iceberg Partitioning Optimization
+
+**Goal**: Optimize `sepa.precios` table layout by partitioning data by `Day(fecha_vigencia)` for faster queries.
+
+**Key Changes**:
+- **Loader**: Refactored `_ensure_iceberg_table` to use `create_table` -> `update_spec` pattern.
+- **Partitioning**: Applied `DayTransform` on `fecha_vigencia`.
+- **Dependencies**: Added `pyiceberg[pyiceberg-core]` (Rust engine) to support partitioning transforms.
+
+**Bugs Fixed**:
+- **Strict Schema Validation**: Fixed crash when creating tables from generic Arrow schemas by avoiding `pyarrow_to_schema()` and letting `create_table` infer IDs.
+- **API Usage**: Corrected syntax for `UpdateSpec.add_field`.

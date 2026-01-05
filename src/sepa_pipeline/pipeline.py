@@ -24,7 +24,7 @@ def process_daily_data(target_date: date, config: SEPAConfig) -> None:
     logger.info(f"Starting SEPA pipeline for {target_date}")
     extractor = SEPAExtractor()
     
-    # 1. Fetch Master ZIP from Bronze (MinIO)
+    # Fetch Master ZIP from Bronze (MinIO)
     try:
         raw_zip_dir = extractor.fetch_from_bronze(target_date, config)
     except Exception as e:
