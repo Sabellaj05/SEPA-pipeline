@@ -294,8 +294,11 @@ class SepaScraper:
         logger.info(f"Destination: s3://{s3_path}")
         
         # Manually stream the file to avoid API version issues with fs.copy_file
-        with open(local_path, "rb") as source:
-            with s3.open_output_stream(s3_path) as dest:
-                dest.write(source.read())
-        
-        logger.info("Upload to Bronze Layer successful")
+        try:
+            with open(local_path, "rb") as source:
+                with s3.open_output_stream(s3_path) as dest:
+                    dest.write(source.read())
+            
+            logger.info("Upload to Bronze Layer successful")
+        except Exception as e:
+            logger.warning(f"Error uploading data to MinIO: {e}")
