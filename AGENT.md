@@ -4,214 +4,167 @@ This document provides a detailed, technical overview of the SEPA Price Pipeline
 
 ## 1. Project Overview
 
-- **Purpose**: This project is an asynchronous data pipeline that scrapes daily price data from the SEPA (Sistema Electrónico de Publicidad de Precios Argentino) government website. The goal is to load this data into a production-grade database for large-scale analytics.
-- **Core Functionality**: It navigates to a specific URL, finds a dynamic download link, downloads a large `.zip` file, and is designed to process and load its contents into a PostgreSQL database.
-- **Key Challenge**: The source provides massive daily data dumps (~15M rows/day) within a tight time window, requiring a highly performant and reliable data loading strategy.
+- **Purpose**: This project is an asynchronous data pipeline that scrapes daily price data from the SEPA (Sistema Electrónico de Publicidad de Precios Argentino) government website. The goal is to ingest this data into a Hybrid Lakehouse (PostgreSQL + MinIO/Iceberg) for analytics.
+- **Core Functionality**: It navigates to a specific URL, extracts dynamic download links, downloads large `.zip` files, validates the data, and loads it into both a transactional database and a data lake.
+- **Key Challenge**: Processing massive daily data dumps (~15M rows/day) reliably and efficiently, handling schema evolution and timezone inconsistencies.
 
 ## 2. Technology Stack
 
 - **Language**: Python 3.12+
-- **Package/Dependency Management**: `uv`
 - **Database**: PostgreSQL 16 (via Docker)
-- **Containerization**: Docker Compose
-- **HTTP Client**: `httpx`
-- **HTML Parsing**: `BeautifulSoup4`
-- **Resilience**: `tenacity`
-- **Code Quality & Formatting**: `ruff`
-- **Type Checking**: `mypy`
-- **Testing**: `pytest`
+- **Object Storage**: MinIO (S3-compatible)
+- **Table Format**: Apache Iceberg
+- **Dependency Management**: `uv`
+- **Libraries**:
+    - `polars`: High-performance data processing (the engine of the pipeline).
+    - `pyiceberg`: Logic for interacting with Iceberg tables.
+    - `boto3` / `minio`: S3 interaction.
+    - `psycopg`: PostgreSQL adapter.
+    - `httpx` / `beautifulsoup4`: Scraping.
+    - `tenacity`: Resilience/Retries.
 
 ## 3. Project Structure
 
 ```
 SEPA-pipeline/
-├── .env                  # Local environment variables (DB credentials) - NOT COMMITTED
+├── .env                  # Local environment variables - NOT COMMITTED
 ├── .gitignore
-├── data/                 # (Output) Stores downloaded .zip files.
-├── docker-compose.yml    # Defines PostgreSQL, MinIO, and setup services.
-├── logs/                 # (Output) Contains daily log files.
+├── data/                 # (Output) Local staging for .zip files.
+├── docker-compose.yml    # Infrastructure: Postgres, MinIO, McClient.
+├── logs/                 # (Output) Daily log files.
 ├── sql/
-│   └── init.sql          # DDL script for creating the database schema.
+│   └── init.sql          # DDL: Tables, Views, Partitions.
 ├── src/
-│   └── sepa_pipeline/    # The main installable Python package.
+│   └── sepa_pipeline/
 │       ├── __init__.py
-│       ├── config.py     # Configuration management.
-│       ├── extractor.py  # ZIP extraction logic.
-│       ├── loader.py     # Database loading (Postgres & MinIO).
-│       ├── main.py       # Application entry point.
-│       ├── pipeline.py   # Orchestration logic.
-│       ├── scraper.py    # Web scraping logic.
-│       ├── validator.py  # Data validation logic.
+│       ├── config.py     # Centralized config (Env vars, Paths, Constants).
+│       ├── extractor.py  # ZIP extraction & S3 Fetching logic.
+│       ├── loader.py     # Loading logic for Postgres (COPY) & Iceberg (Append).
+│       ├── pipeline.py   # Main Orchestrator (CLI Entry Point).
+│       ├── scraper.py    # Web scraping & Raw S3 Upload.
+│       ├── validator.py  # Data validation & Schema enforcement.
 │       └── utils/
+│           ├── bootstrap_lakehouse.py  # MinIO Setup & Backfill Utility.
+│           └── logger.py
 ├── tests/
-├── AGENT.md             # This file.
-├── pyproject.toml
-├── README.md
-└── uv.lock
+├── AGENT.md              # This file.
+├── pyproject.toml        # Dependencies & Tool config.
+└── README.md
 ```
 
-## 4. Core Components & Logic
+## 4. Architecture: The Hybrid Lakehouse
 
-### `src/sepa_pipeline/scraper.py`
-- **Contains**: The `SepaScraper` class, which holds all core scraping logic.
-- **Key Methods**: `hurtar_datos()` is the main public method that orchestrates the scraping process.
+The project employs a dual-layer architecture to handle scale and distinct workloads:
 
-### `Database (PostgreSQL)`
-- **Schema File**: `sql/init.sql`
-- **Design Overview**: The schema is highly optimized for a high-volume, time-series workload.
-    - **Dimension Tables**: `comercios` (Companies/Brands), `sucursales` (Stores).
-    - **Master Table**: `productos_master` serves as a normalized product catalog to reduce data redundancy.
-    - **Fact Table**: `precios` is the core table containing daily price observations.
-- **Key Architectural Decisions**:
-    - **Partitioning**: The `precios` table is partitioned by `RANGE(scraped_at)`. This is critical for query performance and efficient data management (e.g., dropping old partitions).
-    - **No Foreign Keys on Fact Table**: Foreign key constraints are **intentionally omitted** on the `precios` table. This is a crucial performance decision to allow for extremely fast bulk loading via PostgreSQL's `COPY` command. Referential integrity is validated at the application layer *before* loading, which is the standard practice for high-volume data warehousing.
+### 4.1. Operational Layer (PostgreSQL)
+- **Role**: Hot Store. Serves real-time/interactive queries for the web frontend.
+- **Schema**:
+    - **Dimensions**: `comercios`, `sucursales`, `productos_master` (Normalized).
+    - **Fact**: `precios` (Partitioned by `fecha_vigencia`).
+- **Optimization**:
+    - **Partitioning**: The `precios` table is partitioned by `RANGE(fecha_vigencia)` (Date). This solves timezone drift issues faced with timestamp partitioning.
+    - **Bulk Loading**: Uses `COPY` for speed. Referential integrity is enforced by the application (`validator.py`) before loading.
+
+### 4.2. Analytical Layer (MinIO + Iceberg)
+- **Role**: Cold Store / Data Lake. Historical analysis and massive aggregations.
+- **Structure**:
+    - **Bronze**: Raw ZIP files stored in MinIO (`s3://sepa-lakehouse/bronze/raw`).
+    - **Silver**: Cleaned data stored as Apache Iceberg tables (`s3://sepa-lakehouse/silver/iceberg`).
+- **Catalog**: PostgreSQL is used as the Iceberg Catalog to track table metadata.
 
 ## 5. Development Workflow
 
-1.  **Start the Database**: The project requires a running PostgreSQL instance, managed by Docker.
+1.  **Start Infrastructure**:
     ```bash
     docker-compose up -d
     ```
-2.  **Installation**: The project uses `uv`. To install all dependencies into a new virtual environment, run:
+2.  **Initialize/Reset Lakehouse** (First time or after reset):
     ```bash
-    uv sync --all-groups
+    uv run python -m sepa_pipeline.utils.bootstrap_lakehouse
     ```
-3.  **Running the Application**: To ensure portability, the application should be run as a module.
-    ```bash
-    uv run python -m src.sepa_pipeline.main
-    ```
-4.  **Running Tests**:
+3.  **Run Pipeline**:
+    The pipeline is CLI-driven (`pipeline.py`).
+    - **Run for specific date**:
+      ```bash
+      uv run python -m sepa_pipeline.pipeline --date 2026-01-04
+      ```
+    - **Run specific stages**:
+      ```bash
+      uv run python -m sepa_pipeline.pipeline --date 2026-01-04 --stages postgres
+      ```
+4.  **Run Tests**:
     ```bash
     uv run pytest
     ```
 
-## 6. Key Architectural Decisions & History
+## 6. Key Architectural Decisions
 
-- **`src` Layout & Editable Install**: The project uses a standard `src` layout and is installed via `uv pip install -e .` to ensure reliable, production-like imports.
-- **Class-Based Scraper**: The scraping logic is encapsulated in the `SepaScraper` class for clarity and testability.
-- **Containerized Database**: The project uses `docker-compose` to provide a reproducible PostgreSQL environment, separating the application from the database infrastructure.
-- **High-Performance Loading Strategy**: The database schema and ETL process are designed around using PostgreSQL's native `COPY` command for maximum data ingestion speed. This involves validating data integrity at the application level rather than relying on database-level foreign key constraints on the fact table.
+- **Polars for ETL**: Polars is used for all in-memory data transformation due to its speed and memory efficiency compared to Pandas.
+- **Application-Side Integrity**: To enable fast `COPY` inserts, foreign keys are disabled on the fact table. `validator.py` ensures no orphaned records are inserted.
+- **S3-Centric Flow**: The pipeline pulls data from the "Bronze" layer (MinIO) rather than the local file system (except in legacy/dev modes), decoupling scraping from processing.
+- **Strict Partitioning**: Database partitions are strictly aligned with the Business Date (`fecha_vigencia`) rather than ingestion time, ensuring determinism.
 
-## 7. Project Roadmap & Future Goals
-
-- **SPC-1: Project setup and Scraper**: ✅ Complete.
-- **SPC-2: Database Infrastructure**: ✅ Complete. (Schema designed, Docker environment created).
-- **SPC-3: ETL/ELT Pipeline**: ⏳ **Next Step**. This involves building the Python logic to:
-    1.  Unzip the scraped files.
-    2.  Perform application-level validation of data integrity.
-    3.  Load the data into the PostgreSQL database using the `COPY` command, respecting the `comercios` -> `sucursales` -> `productos_master` -> `precios` loading order.
-- **SPC-4: Pipeline Automation/Orchestration**: Future goal (e.g., Airflow).
-- **SPC-5: Analytics Layer**: Future goal.
-
-
-## 8. Changelog & Debugging Log
+## 7. Changelog & Debugging Log
 
 ### 2025-11-20: Ingestion Pipeline Implementation (SPC-3)
 
 **Major Refactoring**:
-- Split monolithic `ingestion.py` into modular components:
-    - `config.py`: Centralized configuration.
-    - `extractor.py`: Parallel ZIP extraction.
-    - `validator.py`: Data integrity and schema validation.
-    - `loader.py`: Database loading logic (Upsert + COPY).
-    - `pipeline.py`: Orchestration script.
+- Split monolithic `ingestion.py` into modular components: `config.py`, `extractor.py`, `validator.py`, `loader.py`, `pipeline.py`.
 
 **Bugs Fixed**:
-1.  **`NotNullViolation` (Footer Detection)**:
-    - **Issue**: Footer rows like "Última actualización" caused null violations.
-    - **Fix**: Implemented robust, case-insensitive footer detection in `SEPAValidator._drop_footer_rows`.
-2.  **`CSV malformed` Warnings**:
-    - **Issue**: Pipe-separated data caused parsing warnings.
-    - **Fix**: Added `quote_char=None` to `pl.read_csv`.
-3.  **`ModuleNotFoundError`**:
-    - **Issue**: Incorrect imports (`src.sepa_pipeline...`).
-    - **Fix**: Corrected to `sepa_pipeline...`.
-4.  **`NotNullViolation` on `id_bandera` / Location Fields**:
-    - **Issue**: Null values in required DB columns.
-    - **Fix**: Added strict null checks in `validator.py` to filter invalid rows before loading.
-5.  **`ForeignKeyViolation`**:
-    - **Issue**: `sucursales` referencing missing `comercios` and `productos` referencing missing `sucursales`.
-    - **Fix**: Implemented strict referential integrity checks in `validator.py` to **drop** orphaned records.
+1.  **`NotNullViolation` (Footer Detection)**: Fixed by `_drop_footer_rows` regex.
+2.  **`CSV malformed` Warnings**: Fixed by `quote_char=None`.
+3.  **`ForeignKeyViolation`**: Fixed by strict referential integrity checks in `validator.py`.
 
-**Current Status**:
-- The pipeline runs successfully and loads data.
-- **Known Issue**: `StringDataRightTruncation` on `sucursales_provincia` (value too long for `varchar(10)`). This is the next item to debug.
-
-**Update (2025-11-20 02:00)**:
-- **Fix**: Expanded `sucursales_provincia` to `VARCHAR(255)` in `sql/init.sql` and migrated the live DB.
-- **Result**: Pipeline successfully ingested **14,217,967** price records in ~10 minutes.
-- **Data Verification**:
-    - Comercios: 45
-    - Sucursales: 3,089
-    - Products: 88,082
-    - Prices: 14,217,967
-
-
-## 9. Architecture Evolution: The Lakehouse Vision
-
-The project is evolving from a single PostgreSQL database to a dual-layer architecture to handle scale and distinct workloads.
-
-### 9.1. Operational Layer (Hot Store)
-- **Purpose**: Serve real-time/interactive queries for the web frontend.
-- **Data Retention**: Recent data only (e.g., last 90 days).
-- **Tech Stack**:
-    - **API**: FastAPI (Endpoints for `/price`, `/history`).
-    - **Database**: PostgreSQL (Indexed for low-latency lookups).
-
-### 9.2. Analytical Layer (Cold Store / Lakehouse)
-- **Purpose**: Historical analysis, BI, and complex aggregations over massive datasets (~1TB/year).
-- **Tech Stack**:
-    - **Storage**: MinIO (S3-compatible object storage).
-    - **Format**: Apache Iceberg (Table format) + Parquet (File format).
-    - **Ingestion**: Python + Polars + PyIceberg.
-    - **Query Engine**: DuckDB (for ad-hoc SQL over Iceberg).
-    - **Transformation**: dbt (managing models in DuckDB/Iceberg).
-    - **BI**: Metabase (Dashboards).
-
-### 9.3. Data Flow
-1.  **Ingestion**: `scraper` -> `pipeline` (Polars) -> **Iceberg/MinIO** (Raw/Bronze & Clean/Silver).
-2.  **Operational Sync**: `pipeline` -> **PostgreSQL** (Recent data only).
 ### 2026-01-03: Lakehouse Phase 2 - Iceberg Integration (Silver Layer)
 
 **Goal**: Load daily price data into an Apache Iceberg table (`sepa.precios`) stored in MinIO.
 
 **Major Changes**:
-- **Dependencies**: Added `pyiceberg[duckdb,s3fs,sql-postgres]` to `pyproject.toml`.
-- **Config**: Updated `SEPAConfig` to include `iceberg_catalog_config` property.
-- **Loader**: Enhanced `SEPALoader` to initializing PyIceberg Catalog and append data.
-- **Pipeline**: Integrated the Iceberg writing step to `pipeline.py`.
+- **Dependencies**: Added `pyiceberg[duckdb,s3fs,sql-postgres]`.
+- **Loader**: Enhanced `SEPALoader` to initialize PyIceberg Catalog and append data.
 
 **Bugs Fixed**:
-1.  **`AWS Error ACCESS_DENIED`**:
-    - **Issue**: PyIceberg failed to connect to local MinIO container.
-    - **Fix**: Added `"s3.signer": "s3v4"`, `"s3.region": "us-east-1"` to catalog config, and fixed credential loading.
+1.  **`AWS Error ACCESS_DENIED`**: Fixed by adding `"s3.signer": "s3v4"` to catalog config.
 
 ### 2026-01-03: Lakehouse Phase 3 - Bronze Layer Decoupling
 
-**Goal**: Move to a "Cloud-Native" architecture where Ingestion (Scraper) and Processing (Pipeline) are decoupled via S3/MinIO.
+**Goal**: Move to a "Cloud-Native" architecture.
 
 **Key Changes**:
-*   **`src/sepa_pipeline/scraper.py`**: Now uploads Raw ZIPs directly to `s3://sepa-lakehouse/bronze/raw` immediately after download.
-*   **`src/sepa_pipeline/extractor.py`**: Added `fetch_from_bronze` to download and unzip the Master ZIP from S3, becoming the new pipeline entry point.
-*   **`src/sepa_pipeline/pipeline.py`**: Orchestrates the new flow: Fetch (S3) -> Extract -> Load.
-*   **Standard Bronze (Parquet)**: Restored raw-but-structured Parquet file generation to `bronze/parquets` for easy auditing.
+*   **`src/sepa_pipeline/scraper.py`**: Now uploads Raw ZIPs to `s3://sepa-lakehouse/bronze/raw`.
+*   **`src/sepa_pipeline/extractor.py`**: Added `fetch_from_bronze` to download from S3.
 
 **Bugs Fixed**:
-*   **`pyarrow.fs.copy_file` API Error**: Replaced high-level copy methods with manual `open_input_stream` / `open_output_stream` in both Scraper and Extractor to ensure robust file transfers across PyArrow versions.
-
-**Verification Status**:
-*   **Pipeline Run**: Successfully processed **14,371,731 records** from end-to-end (matches Postgres).
-*   **Storage**: Validated data presence in both Iceberg table and MinIO buckets.
+*   **`pyarrow.fs.copy_file` API Error**: Replaced with manual `open_input_stream`.
 
 ### 2026-01-04: Lakehouse Phase 3b - Iceberg Partitioning Optimization
 
-**Goal**: Optimize `sepa.precios` table layout by partitioning data by `Day(fecha_vigencia)` for faster queries.
+**Goal**: Partition `sepa.precios` by `Day(fecha_vigencia)`.
 
 **Key Changes**:
-- **Loader**: Refactored `_ensure_iceberg_table` to use `create_table` -> `update_spec` pattern.
-- **Partitioning**: Applied `DayTransform` on `fecha_vigencia`.
-- **Dependencies**: Added `pyiceberg[pyiceberg-core]` (Rust engine) to support partitioning transforms.
+- **Partitioning**: Applied `DayTransform` on `fecha_vigencia` in Iceberg.
+- **Dependencies**: Added `pyiceberg[pyiceberg-core]`.
 
 **Bugs Fixed**:
-- **Strict Schema Validation**: Fixed crash when creating tables from generic Arrow schemas by avoiding `pyarrow_to_schema()` and letting `create_table` infer IDs.
-- **API Usage**: Corrected syntax for `UpdateSpec.add_field`.
+- **Strict Schema Validation**: Fixed crash when creating tables from generic Arrow schemas.
+
+### 2026-01-06: Robustness, CLI & Schema Fixes (Phase 4-6)
+
+**Goal**: Enhance operational control and data quality, fixing timezone-related partitioning issues.
+
+**Key Changes**:
+- **CLI Implementation**: Refactored `pipeline.py` to support `argparse` (`--date`, `--stages`).
+- **Bootstrap Utility**: Added `bootstrap_lakehouse.py` to automate bucket creation.
+- **Strict Validation**: Moved validation *inside* the processing loop to prevent bad data merges.
+- **Schema Migration**: Changed `precios` partitioning from `scraped_at` (Timestamp) to `fecha_vigencia` (Date).
+
+**Bugs Fixed**:
+- **Timezone Drift**:
+    - **Issue**: Timestamp partitioning caused late-night scrapes (UTC) to land in tomorrow's partition.
+    - **Fix**: Switched to Date-based partitioning (`fecha_vigencia`).
+- **Schema Contamination**:
+    - **Issue**: `pl.concat` failed on mismatched chunks.
+    - **Fix**: Validate-then-merge strategy implemented.
+
+
