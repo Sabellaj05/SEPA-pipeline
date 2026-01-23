@@ -149,3 +149,4 @@ Thumbs.db
 logs/
 data/
 *.zip
+.agent/
