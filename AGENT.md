@@ -168,10 +168,27 @@ The project employs a dual-layer architecture to handle scale and distinct workl
     - **Fix**: Validate-then-merge strategy implemented.
 
 
-### 2026-01-25: Scraper Date Verification (Refactor)
 
-**Goal**: Prevent ingestion of stale data when the SEPA website has not yet been updated for the current day.
+### 2026-01-25: Robustness & Bronze Parquet (Phase 7)
+
+**Goal**: Mitigate data loss risks, harden the pipeline against missing data, and optimize Bronze Layer for fast replay.
 
 **Key Changes**:
-- **Scraper Hardening**: Modified `SepaScraper._parse_html` to extract the visible date string from the `.package-info` HTML block (e.g., `Precios SEPA Minoristas viernes, 2026-01-23`).
-- **Strict Verification**: The scraper now compares the extracted HTML date with the target `iso_date`. If they mismatch, the process aborts immediately to avoid downloading old or incorrect files.
+- **Bronze Parquet Chunking**: Refactored `loader.py` to write "Stateless" Parquet chunks (`chunk_{uuid}.parquet`) directly to `s3://sepa-lakehouse/bronze/parquet/`. This avoids maintaining fragile open S3 connections for long durations.
+- **Scraper Hardening**: (See above) implemented strict date verification by parsing HTML descriptions.
+- **Graceful Failure**: Updates `extractor.py` and `pipeline.py` to detect missing Bronze data and exit with a `WARNING` (Status: SCKIPPED) rather than crashing with a traceback.
+
+**Storage Metrics (Projected)**:
+| Layer | Size/Year | Note |
+|:---|:---|:---|
+| **Bronze Raw** | 113 GB | Immutable Archive |
+| **Bronze Parquet** | 39 GB | Fast Replay Source |
+| **Silver Iceberg** | 27 GB | Analytics Ready |
+| **Postgres (90 Days)** | 330 GB | Hot Store (Truncated) |
+
+## 8. Next Steps: Phase 8 - Orchestration
+
+With the core pipeline hardened, the focus shifts to automation and monitoring:
+- **Orchestration Tool**: Implement Airflow or Dagster to manage the daily schedule.
+- **Schema Evolution**: Define policies for handling new columns in CSVs (currently implicit).
+- **Retention Policies**: Automate the truncation of old Postgres partitions.

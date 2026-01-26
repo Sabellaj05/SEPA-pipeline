@@ -20,15 +20,6 @@ class SEPAConfig:
     raw_data_dir: Path = Path("data")
     archive_dir: Path = Path("data/archive")
 
-    # Test env vars
-    # sepa_user = os.getenv("TEST_POSTGRES_USER")
-    # sepa_password = os.getenv("TEST_POSTGRES_PASSWORD")
-    # sepa_db = os.getenv("TEST_POSTGRES_DB")
-    # sepa_host = os.getenv("TEST_POSTGRES_HOST")
-    # sepa_port = os.getenv("TEST_POSTGRES_PORT")
-    # raw_data_dir: Path = Path("data")
-    # archive_dir: Path = Path("data/archive_test")
-
     # MinIO / S3 Configuration
     minio_endpoint: str = os.getenv("MINIO_ENDPOINT")
     # Fallback to MINIO_USER/PASSWORD if specific keys aren't set
