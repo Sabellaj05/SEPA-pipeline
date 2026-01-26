@@ -437,8 +437,12 @@ class SEPALoader:
     def append_to_parquet(
         self, df: pl.DataFrame, fecha_vigencia: date
     ) -> None:
-        """Append chunk to a single Parquet file in MinIO/S3"""
+        """
+        Write a chunk to a unique Parquet file in MinIO/S3 (Stateless).
+        Each chunk gets its own file to avoid S3 multipart upload complexity/risk.
+        """
         from pyarrow import fs
+        import uuid
 
         # Initialize S3 Filesystem
         s3 = fs.S3FileSystem(
@@ -449,39 +453,33 @@ class SEPALoader:
             region="us-east-1", # Required for MinIO compatibility
         )
 
-        # Define path in bucket
+        chunk_id = uuid.uuid4().hex
+        
+        # Define path in bucket (hive-style partitioning)
+        # s3://bucket/bronze/parquet/year=YYYY/month=MM/day=DD/chunk_{uuid}.parquet
         file_path = (
-            f"{self.config.minio_bucket}/bronze/precios/"
+            f"{self.config.minio_bucket}/bronze/parquet/"
             f"year={fecha_vigencia.year}/"
             f"month={fecha_vigencia.month:02d}/"
             f"day={fecha_vigencia.day:02d}/"
-            "precios.parquet"
+            f"chunk_{chunk_id}.parquet"
         )
 
-        # Convert to Arrow Table
-        table = df.to_arrow()
-
-        if self._parquet_writer is None:
-            logger.info(f"Creating new Parquet writer for s3://{file_path}")
+        # Write directly to S3
+        logger.info(f"Writing Parquet chunk -> {file_path}")
+        try:
+            # since we already set up PyArrow S3FileSystem, let's use PyArrow for precise control.
             
-            # Open output stream on S3
-            # We need to keep the file open across chunks, so we store the writer.
-            # PyArrow's ParquetWriter can take a filesystem object or an open file-like object.
-            # Passing the path and filesystem is usually easiest.
-            
-            self._parquet_writer = pq.ParquetWriter(
-                file_path,
-                table.schema,
-                compression="zstd",
-                filesystem=s3
-            )
-        
-        self._parquet_writer.write_table(table)
-        logger.info(f"Appended {len(df)} rows to Parquet (S3)")
+            with s3.open_output_stream(file_path) as out_stream:
+                pq.write_table(
+                    df.to_arrow(),
+                    out_stream,
+                    compression="zstd"
+                )
+        except Exception as e:
+            logger.error(f"Failed to write Parquet chunk to S3: {e}")
+            raise
 
-    def close_parquet_writer(self) -> None:
-        """Close the Parquet writer if open"""
-        if self._parquet_writer:
-            self._parquet_writer.close()
-            self._parquet_writer = None
-            logger.info("Closed Parquet writer")
+    # def close_parquet_writer(self) -> None:
+    #     """Depreciated: No-op for stateless writer"""
+    #     pass
