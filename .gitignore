@@ -151,3 +151,4 @@ data/
 *.zip
 .agent/
 .pyiceberg.yaml
+tmp/

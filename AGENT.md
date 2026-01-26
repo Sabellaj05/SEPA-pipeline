@@ -173,10 +173,20 @@ The project employs a dual-layer architecture to handle scale and distinct workl
 
 **Goal**: Mitigate data loss risks, harden the pipeline against missing data, and optimize Bronze Layer for fast replay.
 
+- **Scraper Hardening**: Modified `SepaScraper._parse_html` to extract the visible date string from the `.package-info` HTML block (e.g., `Precios SEPA Minoristas viernes, 2026-01-23`).
+- **Strict Verification**: The scraper now compares the extracted HTML date with the target `iso_date`. If they mismatch, the process aborts immediately to avoid downloading old or incorrect files.
 **Key Changes**:
 - **Bronze Parquet Chunking**: Refactored `loader.py` to write "Stateless" Parquet chunks (`chunk_{uuid}.parquet`) directly to `s3://sepa-lakehouse/bronze/parquet/`. This avoids maintaining fragile open S3 connections for long durations.
 - **Scraper Hardening**: (See above) implemented strict date verification by parsing HTML descriptions.
 - **Graceful Failure**: Updates `extractor.py` and `pipeline.py` to detect missing Bronze data and exit with a `WARNING` (Status: SCKIPPED) rather than crashing with a traceback.
+
+**Bugs Fixed (Phase 7 - Resource Management)**:
+1.  **Disk Exhaustion (`No space left on device`)**:
+    - **Issue**: Pipeline was downloading massive ZIPs to `/tmp` (root/RAM disk) and failing to clean up, crashing the OS.
+    - **Fix**: Implemented strict `try...finally { shutil.rmtree }` cleanup in `pipeline.py` and added `config.SEPA_TEMP_DIR` to support offloading temp files to local disk.
+2.  **OOM Crash (Querying)**:
+    - **Issue**: `query_table.py` loaded the entire Iceberg table history into RAM (`to_arrow()`) causing a crash on 32GB RAM machines.
+    - **Fix**: Optimized query to use column pruning (`selected_fields`) and added limits for sampling.
 
 **Storage Metrics (Projected)**:
 | Layer | Size/Year | Note |

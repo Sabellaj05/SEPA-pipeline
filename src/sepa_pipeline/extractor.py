@@ -128,7 +128,8 @@ class SEPAExtractor:
             return None
             
         # Local Temp Path
-        temp_dir = Path(f"/tmp/sepa_bronze_{target_date}")
+        # Use configured temp directory (defaults to /tmp, but can be local)
+        temp_dir = config.temp_dir / f"sepa_bronze_{target_date}"
         temp_dir.mkdir(parents=True, exist_ok=True)
         local_zip_path = temp_dir / filename
         

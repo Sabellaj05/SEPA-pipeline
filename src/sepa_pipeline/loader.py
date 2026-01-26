@@ -45,7 +45,7 @@ class SEPALoader:
         fecha_vigencia: date,
     ) -> None:
         """Load data to PostgreSQL using COPY (fastest method)"""
-        logger.info(f"Loading data to PostgreSQL for {fecha_vigencia}")
+        logger.info(f"[POSTGRES] Loading data to PostgreSQL for {fecha_vigencia}")
 
         # Create partition for this date
         with psycopg.connect(self.config.postgres_dsn) as conn:
@@ -61,12 +61,12 @@ class SEPALoader:
         # Bulk load precios
         self._bulk_load_precios(df_productos, scraped_at, fecha_vigencia)
 
-        logger.info(f"✅ Loaded {len(df_productos):,} price records to PostgreSQL")
+        logger.info(f"[POSTGRES] ✅ Loaded {len(df_productos):,} price records to PostgreSQL")
 
     def prepare_precios_partition(self, fecha_vigencia: date) -> None:
         """Create and truncate the partition for the given date."""
         partition_name = f"precios_{fecha_vigencia.strftime('%Y_%m_%d')}"
-        logger.info(f"Preparing partition {partition_name}...")
+        logger.info(f"[POSTGRES] Preparing partition {partition_name}...")
         
         with psycopg.connect(self.config.postgres_dsn) as conn:
             with conn.cursor() as cur:
@@ -74,11 +74,11 @@ class SEPALoader:
                 cur.execute("SELECT create_precios_partition(%s)", (fecha_vigencia,))
                 
                 # 2. Truncate partition (idempotency)
-                logger.info(f"Truncating partition {partition_name}...")
+                logger.info(f"[POSTGRES] Truncating partition {partition_name}...")
                 try:
                     cur.execute(f"TRUNCATE TABLE {partition_name}")
                 except psycopg.errors.UndefinedTable:
-                    logger.warning(f"Partition {partition_name} does not exist (unexpected), skipping truncate")
+                    logger.warning(f"[POSTGRES] Partition {partition_name} does not exist (unexpected), skipping truncate")
                     
             conn.commit()
 
@@ -88,15 +88,15 @@ class SEPALoader:
             return
 
         if not self.catalog:
-            logger.error("Iceberg catalog not initialized, cannot create table")
+            logger.error("[ICEBERG] Iceberg catalog not initialized, cannot create table")
             return
 
         table_identifier = "sepa.precios"
         try:
             self._iceberg_table = self.catalog.load_table(table_identifier)
-            logger.info(f"Loaded existing Iceberg table: {table_identifier}")
+            logger.info(f"[ICEBERG] Loaded existing Iceberg table: {table_identifier}")
         except NoSuchTableError:
-            logger.info(f"Iceberg table {table_identifier} not found, creating from schema...")
+            logger.info(f"[ICEBERG] Iceberg table {table_identifier} not found, creating from schema...")
             
             # Use the dataframe schema to create the table
             arrow_table = df.to_arrow()
@@ -113,14 +113,14 @@ class SEPALoader:
                 table_identifier,
                 schema=arrow_table.schema,
             )
-            logger.info(f"Created base Iceberg table: {table_identifier}")
+            logger.info(f"[ICEBERG] Created base Iceberg table: {table_identifier}")
 
             # 2. Update Partition Spec: Day(fecha_vigencia)
             # This is safer than defining it at creation for fresh schemas without IDs
             try:
                 with self._iceberg_table.update_spec() as update:
                     update.add_field("fecha_vigencia", DayTransform(), partition_field_name="fecha_vigencia_day")
-                logger.info("Updated partition spec: Day(fecha_vigencia)")
+                logger.info("[ICEBERG] Updated partition spec: Day(fecha_vigencia)")
             except Exception as e:
                 logger.error(f"Failed to set partition spec: {e}")
                 # We don't raise here to allow data loading to proceed (unpartitioned backup)
@@ -141,7 +141,7 @@ class SEPALoader:
                 return
 
         if self._iceberg_table:
-            logger.info(f"Cleaning up existing data for date: {fecha_vigencia}")
+            logger.info(f"[ICEBERG] Cleaning up existing data for date: {fecha_vigencia}")
             try:
                 # Use PyIceberg expression to delete matching rows
                 self._iceberg_table.delete(delete_filter=EqualTo("fecha_vigencia", fecha_vigencia))
@@ -153,7 +153,7 @@ class SEPALoader:
     def append_to_iceberg(self, df: pl.DataFrame, scraped_at: datetime, fecha_vigencia: date) -> None:
         """Append a chunk of data to the Iceberg table."""
         if not self.catalog:
-             logger.warning("Skipping Iceberg append (catalog not init)")
+             logger.warning("[ICEBERG] Skipping Iceberg append (catalog not init)")
              return
              
         # Enrich DataFrame with timestamps (same as bulk_load_precios)
@@ -170,10 +170,10 @@ class SEPALoader:
         self._ensure_iceberg_table(df)
         
         if self._iceberg_table:
-            logger.info(f"Appending {len(df)} rows to Iceberg table...")
+            logger.info(f"[ICEBERG] Appending {len(df)} rows to Iceberg table...")
             self._iceberg_table.append(df.to_arrow())
         else:
-            logger.error("Failed to load/create Iceberg table, skipping append")
+            logger.error("[ICEBERG] Failed to load/create Iceberg table, skipping append")
 
     def upsert_comercios(self, df: pl.DataFrame) -> None:
         """Upsert comercios dimension table"""
@@ -217,7 +217,7 @@ class SEPALoader:
                 cur.executemany(insert_sql, records)
                 conn.commit()
 
-        logger.info(f"Upserted {len(df)} comercio records")
+        logger.info(f"[POSTGRES] Upserted {len(df)} comercio records")
 
     def upsert_sucursales(self, df: pl.DataFrame) -> None:
         self._upsert_sucursales(df)
@@ -294,7 +294,7 @@ class SEPALoader:
                 cur.executemany(insert_sql, records)
                 conn.commit()
 
-        logger.info(f"Upserted {len(records)} sucursal records")
+        logger.info(f"[POSTGRES] Upserted {len(records)} sucursal records")
 
     def _upsert_productos_master(self, df: pl.DataFrame) -> None:
         """Upsert productos_master table (populate basic master records)."""
@@ -364,7 +364,7 @@ class SEPALoader:
                 cur.executemany(insert_sql, records)
                 conn.commit()
 
-        logger.info(f"Upserted {len(records)} unique products into productos_master")
+        logger.info(f"[POSTGRES] Upserted {len(records)} unique products into productos_master")
     
     def upsert_productos_master(self, df: pl.DataFrame) -> None:
         self._upsert_productos_master(df)
@@ -407,7 +407,7 @@ class SEPALoader:
         #     ]
         # )
 
-        temp_csv = Path(f"/tmp/precios_{fecha_vigencia}.csv")
+        temp_csv = self.config.temp_dir / f"precios_{fecha_vigencia}.csv"
         df_precios.write_csv(temp_csv, separator="|")
 
         with psycopg.connect(self.config.postgres_dsn) as conn:
@@ -466,7 +466,7 @@ class SEPALoader:
         )
 
         # Write directly to S3
-        logger.info(f"Writing Parquet chunk -> {file_path}")
+        logger.info(f"[BRONZE] Writing Parquet chunk -> {file_path}")
         try:
             # since we already set up PyArrow S3FileSystem, let's use PyArrow for precise control.
             

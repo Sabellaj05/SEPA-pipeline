@@ -36,6 +36,10 @@ class SEPAConfig:
 
     retention_days_postgres: int = 90
     max_workers: int = 8
+    
+    # Temporary Directory for large file processing
+    # Defaults to /tmp, but can be overridden to use local disk (e.g., ./tmp or /mnt/data)
+    temp_dir: Path = Path(os.getenv("SEPA_TEMP_DIR", "/tmp"))
 
     @property
     def iceberg_catalog_config(self) -> dict:
