@@ -168,3 +168,10 @@ The project employs a dual-layer architecture to handle scale and distinct workl
     - **Fix**: Validate-then-merge strategy implemented.
 
 
+### 2026-01-25: Scraper Date Verification (Refactor)
+
+**Goal**: Prevent ingestion of stale data when the SEPA website has not yet been updated for the current day.
+
+**Key Changes**:
+- **Scraper Hardening**: Modified `SepaScraper._parse_html` to extract the visible date string from the `.package-info` HTML block (e.g., `Precios SEPA Minoristas viernes, 2026-01-23`).
+- **Strict Verification**: The scraper now compares the extracted HTML date with the target `iso_date`. If they mismatch, the process aborts immediately to avoid downloading old or incorrect files.

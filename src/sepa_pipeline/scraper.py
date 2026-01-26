@@ -1,5 +1,6 @@
 """SEPA Precios data scraper"""
 
+import re
 from pathlib import Path
 from types import TracebackType
 from typing import Optional, Self
@@ -102,40 +103,56 @@ class SepaScraper:
 
             # Get today's Spanish day name
             day_name = self.fecha.nombre_weekday
-            logger.info(f"Today is: {day_name}")
+            iso_date = self.fecha.hoy
+            logger.info(f"Today is: {day_name} {iso_date}")
 
-            # Find all links on the page
-            all_links = soup.find_all("a", href=True)
-            logger.info(f"Found {len(all_links)} total links on page")
+            # Iterate over all package containers to find the one for today
+            logger.info(f"Scanning for package matching date: {iso_date}")
+            
+            # Find all containers that hold package info and actions
+            pkg_containers = soup.find_all("div", class_="pkg-container")
+            logger.info(f"Found {len(pkg_containers)} package containers")
+            
+            for container in pkg_containers:
+                # check date in this container
+                package_info = container.find("div", class_="package-info")
+                if not package_info:
+                    continue
+                    
+                p_tag = package_info.find("p")
+                if not p_tag:
+                    continue
+                    
+                text_content = p_tag.get_text().strip()
+                match = re.search(r"(\d{4}-\d{2}-\d{2})", text_content)
+                
+                if match:
+                    found_date = match.group(1)
+                    if found_date == iso_date:
+                        logger.info(f"Found matching date container: {found_date}")
+                        
+                        # get the download link from THIS container
+                        # The actions div is usually a sibling or child in the same container
+                        actions_div = container.find("div", class_="pkg-actions")
+                        if actions_div:
+                            # Look for the download button/link
+                            # Usually the second link or the one with button "DESCARGAR"
+                            links = actions_div.find_all("a", href=True)
+                            for link in links:
+                                href = link.get("href", "")
+                                # Check if it looks like a zip download or contains "download"
+                                if "download" in str(href).lower() or ".zip" in str(href).lower():
+                                    logger.info(f"Found download link: {href}")
+                                    return str(href)
+                        
+                        # Fallback: Searching recursively in this container if logic above failed
+                        link = container.find("a", href=True, string=lambda t: t and "DESCARGAR" in t)
+                        if link:
+                             return str(link.get("href"))
+                             
+                # If date doesn't match, continue to next container
 
-            # Look for link containing "sepa_" + day name + ".zip"
-            # target_filename = f"sepa_{day_name}.zip"
-            target_filename = self._scraped_filename()
-            logger.info(f"Searching for file: {target_filename}")
-
-            for link in all_links:
-                href = link.get("href", "")  # type: ignore[union-attr]
-
-                # ignore 'mypy error' because the code is fine
-                # A _QueryResults (or ResultSet) is what you get when you call methods
-                # like find_all() or select()—it is essentially a list-like container
-                # of Tag objects, so you must access elements within it before you can
-                # call methods like get().
-                #
-                # links = soup.find_all('a', class_='product-link')
-                # hrefs = [link.get('href') for link in links]
-                # .get() works on each Tag, not on the ResultSet
-
-                # Check if this link contains the target filename
-                if target_filename in str(href).lower():
-                    logger.info("Found matching download link!")
-                    logger.info(f"Link: {href}")
-
-                    # The link should already be absolute from the CKAN dataset page
-                    return str(href)
-
-            logger.warning(f"No download link found for {target_filename}")
-            logger.debug(f"Searched all {len(all_links)} links")
+            logger.error(f"No package found for date {iso_date}. The site might not be updated yet.")
             return None
 
         except Exception as e:
