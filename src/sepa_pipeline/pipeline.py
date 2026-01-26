@@ -43,6 +43,9 @@ def process_daily_data(target_date: date, config: SEPAConfig, stages: list[str] 
     # Fetch Master ZIP from Bronze (MinIO)
     try:
         raw_zip_dir = extractor.fetch_from_bronze(target_date, config)
+        if raw_zip_dir is None:
+            logger.warning(f"Skipping pipeline execution: Source data not available for {target_date}.")
+            return
     except Exception as e:
         logger.error(f"Failed to fetch from Bronze Layer: {e}")
         # Build robustness: In a real scenario, we might trigger the scraper here if missing,
@@ -223,7 +226,7 @@ def process_daily_data(target_date: date, config: SEPAConfig, stages: list[str] 
                     loader.append_to_iceberg(df_producto, scraped_at, target_date)
                 
                 # Archive to Parquet (Bronze Layer)
-                # loader.append_to_parquet(df_producto, target_date)
+                loader.append_to_parquet(df_producto, target_date)
                 
                 total_prices_loaded += df_producto.height
             
@@ -232,7 +235,7 @@ def process_daily_data(target_date: date, config: SEPAConfig, stages: list[str] 
             # Continue to next chunk instead of crashing entire pipeline?
             # For now, let's log and continue.
 
-    loader.close_parquet_writer()
+    # loader.close_parquet_writer()
     logger.info(f"✅ Pipeline completed successfully for {target_date}. Total prices loaded: {total_prices_loaded:,}")
 
 
@@ -267,10 +270,11 @@ if __name__ == "__main__":
         args = parse_args()
         if args.date:
              try:
-                 target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+                # convert to date obj
+                target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
              except ValueError:
-                 logger.error("Invalid date format. Use YYYY-MM-DD")
-                 sys.exit(1)
+                logger.error("Invalid date format. Use YYYY-MM-DD")
+                sys.exit(1)
         else:
              target_date = Fecha().ahora.date()
              
@@ -278,7 +282,6 @@ if __name__ == "__main__":
     else:
         # Default behavior if no args provided (backward compatible-ish)
         # But we want to encourage CLI usage.
-        # Let's verify if current date is 2026-01-05
         target_date = Fecha().ahora.date()
         stages = ["postgres", "iceberg"]
 
