@@ -7,7 +7,7 @@ import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 from sepa_pipeline.utils.logger import get_logger
 from sepa_pipeline.utils.fecha import Fecha
 from pyarrow import fs
@@ -91,7 +91,7 @@ class SEPAExtractor:
         return all_csv_paths
 
     @staticmethod
-    def fetch_from_bronze(target_date: date, config: SEPAConfig) -> Path:
+    def fetch_from_bronze(target_date: date, config: SEPAConfig) -> Optional[Path]:
         """
         Download the Master ZIP from MinIO (Bronze Layer) and unzip it to a temp dir.
         Returns the path to the directory containing the child ZIPs.
@@ -110,8 +110,6 @@ class SEPAExtractor:
         # Construct S3 Path
         # The stored file is usually: sepa_precios_YYYY-MM-DD.zip
         # Path: bucket/bronze/raw/year=YYYY/month=MM/day=DD/filename.zip
-        # But wait, we need the exact filename or list the directory.
-        # Scraper saves as: sepa_precios_YYYY-MM-DD.zip
         
         filename = f"sepa_precios_{target_date.strftime('%Y-%m-%d')}.zip"
         s3_path = (
@@ -122,6 +120,13 @@ class SEPAExtractor:
             f"{filename}"
         )
         
+        # Check if file exists using get_file_info logic
+        # Note: s3.get_file_info returns a FileInfo object. type == FileType.NotFound if missing.
+        file_info = s3.get_file_info(s3_path)
+        if file_info.type == fs.FileType.NotFound:
+            logger.warning(f"Data not found in Bronze Layer for {target_date} (Path: {s3_path})")
+            return None
+            
         # Local Temp Path
         temp_dir = Path(f"/tmp/sepa_bronze_{target_date}")
         temp_dir.mkdir(parents=True, exist_ok=True)
