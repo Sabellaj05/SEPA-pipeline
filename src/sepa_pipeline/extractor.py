@@ -2,14 +2,12 @@
 SEPA Data Extractor
 Handles ZIP file extraction.
 """
-import logging
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional
 from sepa_pipeline.utils.logger import get_logger
-from sepa_pipeline.utils.fecha import Fecha
 from pyarrow import fs
 from sepa_pipeline.config import SEPAConfig
 
@@ -43,7 +41,7 @@ class SEPAExtractor:
         return csv_paths
 
     @staticmethod
-    def extract_all_zips(source_dir: Path, target_date: date = None) -> List[Dict[str, Path]]:
+    def extract_all_zips(source_dir: Path, target_date: date | None = None) -> List[Dict[str, Path]]:
         """
         Extract all ZIP files from a source directory in parallel.
         If target_date is None, source_dir is treated as the directory containing zips.
@@ -55,7 +53,7 @@ class SEPAExtractor:
                 # Allow for the case where source_dir IS the date dir
                 if source_dir.name == target_date.isoformat():
                      date_dir = source_dir
-                else: 
+                else:
                      raise FileNotFoundError(f"No data directory for {target_date} in {source_dir}")
         else:
             # Cloud mode: source_dir IS the directory containing zips
@@ -97,7 +95,7 @@ class SEPAExtractor:
         Returns the path to the directory containing the child ZIPs.
         """
         logger.info(f"Fetching Bronze Layer data for {target_date} from MinIO...")
-        
+
         # Initialize S3 Filesystem
         s3 = fs.S3FileSystem(
             endpoint_override=config.minio_endpoint,
@@ -106,11 +104,11 @@ class SEPAExtractor:
             scheme="http",
             region="us-east-1",
         )
-        
+
         # Construct S3 Path
         # The stored file is usually: sepa_precios_YYYY-MM-DD.zip
         # Path: bucket/bronze/raw/year=YYYY/month=MM/day=DD/filename.zip
-        
+
         filename = f"sepa_precios_{target_date.strftime('%Y-%m-%d')}.zip"
         s3_path = (
             f"{config.minio_bucket}/bronze/raw/"
@@ -119,20 +117,20 @@ class SEPAExtractor:
             f"day={target_date.day:02d}/"
             f"{filename}"
         )
-        
+
         # Check if file exists using get_file_info logic
         # Note: s3.get_file_info returns a FileInfo object. type == FileType.NotFound if missing.
         file_info = s3.get_file_info(s3_path)
         if file_info.type == fs.FileType.NotFound:
             logger.warning(f"Data not found in Bronze Layer for {target_date} (Path: {s3_path})")
             return None
-            
+
         # Local Temp Path
         # Use configured temp directory (defaults to /tmp, but can be local)
         temp_dir = config.temp_dir / f"sepa_bronze_{target_date}"
         temp_dir.mkdir(parents=True, exist_ok=True)
         local_zip_path = temp_dir / filename
-        
+
         logger.info(f"Downloading s3://{s3_path} -> {local_zip_path}")
         try:
             # Manually stream from S3 to local file to avoid API issues with copy_file
@@ -147,18 +145,18 @@ class SEPAExtractor:
         # This will create a folder (usually with the same name as the zip stem) containing child zips
         master_extract_dir = temp_dir / "master_extracted"
         master_extract_dir.mkdir(parents=True, exist_ok=True)
-        
+
         logger.info(f"Unzipping Master ZIP to {master_extract_dir}")
         with zipfile.ZipFile(local_zip_path, "r") as zip_ref:
             zip_ref.extractall(master_extract_dir)
-            
+
         # The content is usually a single folder like 'precios_20240520' containing the zips.
         # Or sometimes just the zips at root. We need to find where the child zips are.
         # Let's search for any .zip file inside master_extract_dir recursively.
         child_zips = list(master_extract_dir.rglob("sepa_*.zip"))
-        
+
         if not child_zips:
             raise ValueError("No child ZIPs found in the downloaded Master ZIP")
-            
+
         # Return the parent directory of the found zips (assuming they are in one dir) --> they are unless source changes it
         return child_zips[0].parent

@@ -12,20 +12,20 @@ load_dotenv()
 class SEPAConfig:
     """Configuration for SEPA pipeline"""
 
-    sepa_user = os.getenv("POSTGRES_USER")
-    sepa_password = os.getenv("POSTGRES_PASSWORD")
-    sepa_db = os.getenv("POSTGRES_DB")
-    sepa_host = os.getenv("POSTGRES_HOST", "localhost") # Default to localhost for host-running scripts
-    sepa_port = os.getenv("POSTGRES_PORT")
+    sepa_user: str | None = os.getenv("POSTGRES_USER")
+    sepa_password: str | None = os.getenv("POSTGRES_PASSWORD")
+    sepa_db: str | None = os.getenv("POSTGRES_DB")
+    sepa_host: str | None = os.getenv("POSTGRES_HOST", "localhost") # Default to localhost for host-running scripts
+    sepa_port: str | None = os.getenv("POSTGRES_PORT")
     raw_data_dir: Path = Path("data")
     archive_dir: Path = Path("data/archive")
 
     # MinIO / S3 Configuration
-    minio_endpoint: str = os.getenv("MINIO_ENDPOINT")
+    minio_endpoint: str | None = os.getenv("MINIO_ENDPOINT")
     # Fallback to MINIO_USER/PASSWORD if specific keys aren't set
-    minio_access_key: str = os.getenv("MINIO_ACCESS_KEY", os.getenv("MINIO_USER"))
-    minio_secret_key: str = os.getenv("MINIO_SECRET_KEY", os.getenv("MINIO_PASSWORD"))
-    minio_bucket: str = os.getenv("MINIO_BUCKET")
+    minio_access_key: str | None = os.getenv("MINIO_ACCESS_KEY", os.getenv("MINIO_USER"))
+    minio_secret_key: str | None = os.getenv("MINIO_SECRET_KEY", os.getenv("MINIO_PASSWORD"))
+    minio_bucket: str | None = os.getenv("MINIO_BUCKET")
 
     @property
     def postgres_dsn(self) -> str:
@@ -36,7 +36,7 @@ class SEPAConfig:
 
     retention_days_postgres: int = 90
     max_workers: int = 8
-    
+
     # Temporary Directory for large file processing
     # Defaults to /tmp, but can be overridden to use local disk (e.g., ./tmp or /mnt/data)
     temp_dir: Path = Path(os.getenv("SEPA_TEMP_DIR", "/tmp"))
@@ -46,9 +46,9 @@ class SEPAConfig:
         """Configuration for PyIceberg SQL Catalog"""
         # SQLAlchemy URI for the catalog (metadata)
         db_uri = f"postgresql+psycopg2://{self.sepa_user}:{self.sepa_password}@{self.sepa_host}:{self.sepa_port}/{self.sepa_db}"
-        
         # Ensure endpoint has scheme
         endpoint = self.minio_endpoint
+        assert endpoint is not None
         # If running locally on host, ensure we target localhost if env is internal
         # if "minio" in endpoint and not "localhost" in endpoint and "127.0.0.1" not in endpoint:
         #      # Heuristic: if we are running the script outside docker but env var is 'minio:9000'
