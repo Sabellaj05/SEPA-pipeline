@@ -1,13 +1,17 @@
 """SEPA Precios data scraper"""
 
+import re
 from pathlib import Path
 from types import TracebackType
 from typing import Optional, Self
 
 import httpx
 from bs4 import BeautifulSoup
+from pyarrow import fs
 from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 from tqdm import tqdm
+
+from sepa_pipeline.config import SEPAConfig
 
 from .utils.fecha import Fecha
 from .utils.logger import get_logger
@@ -100,40 +104,63 @@ class SepaScraper:
 
             # Get today's Spanish day name
             day_name = self.fecha.nombre_weekday
-            logger.info(f"Today is: {day_name}")
+            iso_date = self.fecha.hoy
+            logger.info(f"Today is: {day_name} {iso_date}")
 
-            # Find all links on the page
-            all_links = soup.find_all("a", href=True)
-            logger.info(f"Found {len(all_links)} total links on page")
+            # Iterate over all package containers to find the one for today
+            logger.info(f"Scanning for package matching date: {iso_date}")
 
-            # Look for link containing "sepa_" + day name + ".zip"
-            # target_filename = f"sepa_{day_name}.zip"
-            target_filename = self._scraped_filename()
-            logger.info(f"Searching for file: {target_filename}")
+            # Find all containers that hold package info and actions
+            pkg_containers = soup.find_all("div", class_="pkg-container")
+            logger.info(f"Found {len(pkg_containers)} package containers")
 
-            for link in all_links:
-                href = link.get("href", "")  # type: ignore[union-attr]
+            for container in pkg_containers:
+                # check date in this container
+                package_info = container.find("div", class_="package-info")
+                if not package_info:
+                    continue
 
-                # ignore 'mypy error' because the code is fine
-                # A _QueryResults (or ResultSet) is what you get when you call methods
-                # like find_all() or select()—it is essentially a list-like container
-                # of Tag objects, so you must access elements within it before you can
-                # call methods like get().
-                #
-                # links = soup.find_all('a', class_='product-link')
-                # hrefs = [link.get('href') for link in links]
-                # .get() works on each Tag, not on the ResultSet
+                p_tag = package_info.find("p")
+                if not p_tag:
+                    continue
 
-                # Check if this link contains the target filename
-                if target_filename in str(href).lower():
-                    logger.info("Found matching download link!")
-                    logger.info(f"Link: {href}")
+                text_content = p_tag.get_text().strip()
+                match = re.search(r"(\d{4}-\d{2}-\d{2})", text_content)
 
-                    # The link should already be absolute from the CKAN dataset page
-                    return str(href)
+                if match:
+                    found_date = match.group(1)
+                    if found_date == iso_date:
+                        logger.info(f"Found matching date container: {found_date}")
 
-            logger.warning(f"No download link found for {target_filename}")
-            logger.debug(f"Searched all {len(all_links)} links")
+                        # get the download link from THIS container
+                        # The actions div is usually a sibling or child in the same container
+                        actions_div = container.find("div", class_="pkg-actions")
+                        if actions_div:
+                            # Look for the download button/link
+                            # Usually the second link or the one with button "DESCARGAR"
+                            links = actions_div.find_all("a", href=True)
+                            for link in links:
+                                href = link.get("href", "")
+                                # Check if it looks like a zip download or contains "download"
+                                if (
+                                    "download" in str(href).lower()
+                                    or ".zip" in str(href).lower()
+                                ):
+                                    logger.info(f"Found download link: {href}")
+                                    return str(href)
+
+                        # Fallback: Searching recursively in this container if logic above failed
+                        link = container.find(
+                            "a", href=True, string=lambda t: t and "DESCARGAR" in t
+                        )
+                        if link:
+                            return str(link.get("href"))
+
+                # If date doesn't match, continue to next container
+
+            logger.error(
+                f"No package found for date {iso_date}. The site might not be updated yet."
+            )
             return None
 
         except Exception as e:
@@ -233,7 +260,9 @@ class SepaScraper:
         try:
             response = await self._connect_to_source()
         except RetryError:
-            logger.error("Failed to connect to source after multiple attempts. Aborting.")
+            logger.error(
+                "Failed to connect to source after multiple attempts. Aborting."
+            )
             return False
 
         if not response:
@@ -246,4 +275,57 @@ class SepaScraper:
             logger.error(f"No download link found for {day_name} ({self.fecha.hoy})")
             return False
 
-        return await self._download_data(download_link, min_file_size_mb)
+        success = await self._download_data(download_link, min_file_size_mb)
+
+        if success:
+            # Upload to Bronze Layer (MinIO)
+            try:
+                file_name = self._storage_filename()
+                local_path = self.data_dir / file_name
+                self.upload_to_bronze(local_path)
+            except Exception as e:
+                logger.error(f"Failed to upload to Bronze layer: {e}")
+                # We don't return False here because the download itself was successful,
+                # and for local dev we might continue. In strict cloud, this might be fatal.
+
+        return success
+
+    def upload_to_bronze(self, local_path: Path) -> None:
+        """Upload the raw ZIP file to MinIO (Bronze Layer)."""
+        logger.info(f"Uploading {local_path} to Bronze Layer (MinIO)...")
+
+        config = SEPAConfig()
+
+        # Initialize S3 Filesystem
+        s3 = fs.S3FileSystem(
+            endpoint_override=config.minio_endpoint,
+            access_key=config.minio_access_key,
+            secret_key=config.minio_secret_key,
+            scheme="http",
+            region="us-east-1",
+        )
+
+        # Define path: bronze/raw/YYYY/MM/DD/filename.zip
+        # We use the date from 'self.fecha.ahora' which is a datetime object.
+        date_path = self.fecha.ahora
+
+        s3_path = (
+            f"{config.minio_bucket}/bronze/raw/"
+            f"year={date_path.year}/"
+            f"month={date_path.month:02d}/"
+            f"day={date_path.day:02d}/"
+            f"{local_path.name}"
+        )
+
+        # Ensure directory structure exists (S3 doesn't strictly need this but good for some clients)
+        logger.info(f"Destination: s3://{s3_path}")
+
+        # Manually stream the file to avoid API version issues with fs.copy_file
+        try:
+            with open(local_path, "rb") as source:
+                with s3.open_output_stream(s3_path) as dest:
+                    dest.write(source.read())
+
+            logger.info("Upload to Bronze Layer successful")
+        except Exception as e:
+            logger.warning(f"Error uploading data to MinIO: {e}")

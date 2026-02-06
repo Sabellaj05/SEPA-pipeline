@@ -12,28 +12,20 @@ load_dotenv()
 class SEPAConfig:
     """Configuration for SEPA pipeline"""
 
-    sepa_user = os.getenv("TEST_POSTGRES_USER")
-    sepa_password = os.getenv("TEST_POSTGRES_PASSWORD")
-    sepa_db = os.getenv("TEST_POSTGRES_DB")
-    sepa_host = os.getenv("TEST_POSTGRES_HOST")
-    sepa_port = os.getenv("TEST_POSTGRES_PORT")
+    sepa_user: str | None = os.getenv("POSTGRES_USER")
+    sepa_password: str | None = os.getenv("POSTGRES_PASSWORD")
+    sepa_db: str | None = os.getenv("POSTGRES_DB")
+    sepa_host: str | None = os.getenv("POSTGRES_HOST", "localhost") # Default to localhost for host-running scripts
+    sepa_port: str | None = os.getenv("POSTGRES_PORT")
     raw_data_dir: Path = Path("data")
-    archive_dir: Path = Path("data/archive_test")
-
-    # Production env vars (commented out as in original)
-    # sepa_user = os.getenv("POSTGRES_USER")
-    # sepa_password = os.getenv("POSTGRES_PASSWORD")
-    # sepa_db = os.getenv("POSTGRES_DB")
-    # sepa_host = os.getenv("POSTGRES_HOST")
-    # sepa_port = os.getenv("POSTGRES_PORT")
-    # raw_data_dir: Path = Path("data")
-    # archive_dir: Path = Path("data/archive")
+    archive_dir: Path = Path("data/archive")
 
     # MinIO / S3 Configuration
-    minio_endpoint: str = os.getenv("MINIO_ENDPOINT")
-    minio_access_key: str = os.getenv("MINIO_ACCESS_KEY")
-    minio_secret_key: str = os.getenv("MINIO_SECRET_KEY")
-    minio_bucket: str = os.getenv("MINIO_BUCKET")
+    minio_endpoint: str | None = os.getenv("MINIO_ENDPOINT")
+    # Fallback to MINIO_USER/PASSWORD if specific keys aren't set
+    minio_access_key: str | None = os.getenv("MINIO_ACCESS_KEY", os.getenv("MINIO_USER"))
+    minio_secret_key: str | None = os.getenv("MINIO_SECRET_KEY", os.getenv("MINIO_PASSWORD"))
+    minio_bucket: str | None = os.getenv("MINIO_BUCKET")
 
     @property
     def postgres_dsn(self) -> str:
@@ -44,3 +36,37 @@ class SEPAConfig:
 
     retention_days_postgres: int = 90
     max_workers: int = 8
+
+    # Temporary Directory for large file processing
+    # Defaults to /tmp, but can be overridden to use local disk (e.g., ./tmp or /mnt/data)
+    temp_dir: Path = Path(os.getenv("SEPA_TEMP_DIR", "/tmp"))
+
+    @property
+    def iceberg_catalog_config(self) -> dict:
+        """Configuration for PyIceberg SQL Catalog"""
+        # SQLAlchemy URI for the catalog (metadata)
+        db_uri = f"postgresql+psycopg2://{self.sepa_user}:{self.sepa_password}@{self.sepa_host}:{self.sepa_port}/{self.sepa_db}"
+        # Ensure endpoint has scheme
+        endpoint = self.minio_endpoint
+        assert endpoint is not None
+        # If running locally on host, ensure we target localhost if env is internal
+        # if "minio" in endpoint and not "localhost" in endpoint and "127.0.0.1" not in endpoint:
+        #      # Heuristic: if we are running the script outside docker but env var is 'minio:9000'
+        #      endpoint = endpoint.replace("minio", "localhost")
+
+        if not endpoint.startswith("http"):
+            endpoint = f"http://{endpoint}"
+
+        return {
+            "type": "sql",
+            "uri": db_uri,
+            "warehouse": f"s3://{self.minio_bucket}/silver/iceberg",
+            "s3.endpoint": endpoint,
+            "s3.access-key-id": self.minio_access_key,
+            "s3.secret-access-key": self.minio_secret_key,
+            "s3.region": "us-east-1",
+            # PyIceberg/PyArrow should handle scheme from endpoint, but path-style is usually needed for MinIO
+            # "s3.path-style-access": "true", # PyArrow might default correctly with custom endpoint, but let's try WITHOUT explicit first if PyArrow script worked without it.
+            # actually, PyArrow script didn't set it. let's comment it out to match.
+            "s3.signer": "s3v4", # Force S3v4 signing for MinIO compatibility
+        }

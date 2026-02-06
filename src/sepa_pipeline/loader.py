@@ -2,19 +2,23 @@
 SEPA Data Loader
 Handles database loading and archiving.
 """
-import logging
-from datetime import date, datetime
-from pathlib import Path
 
-import pyarrow.parquet as pq
+from datetime import date, datetime
+
 import polars as pl
 import psycopg
+import pyarrow.parquet as pq
+from pyiceberg.catalog import Catalog, load_catalog
+from pyiceberg.exceptions import NoSuchTableError
+from pyiceberg.expressions import EqualTo
+from pyiceberg.table import Table
+from pyiceberg.transforms import DayTransform
 
 from sepa_pipeline.config import SEPAConfig
-
 from sepa_pipeline.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
 
 class SEPALoader:
     """Loads validated data into PostgreSQL and Parquet"""
@@ -22,6 +26,16 @@ class SEPALoader:
     def __init__(self, config: SEPAConfig):
         self.config = config
         self._parquet_writer = None
+
+        # Initialize Iceberg Catalog
+        try:
+            self.catalog: Catalog | None = load_catalog(
+                "default", **self.config.iceberg_catalog_config
+            )
+            self._iceberg_table: Table | None = None
+        except Exception as e:
+            logger.warning(f"Failed to initialize Iceberg Catalog: {e}")
+            self.catalog = None
 
     def load_to_postgres(
         self,
@@ -32,7 +46,7 @@ class SEPALoader:
         fecha_vigencia: date,
     ) -> None:
         """Load data to PostgreSQL using COPY (fastest method)"""
-        logger.info(f"Loading data to PostgreSQL for {fecha_vigencia}")
+        logger.info(f"[POSTGRES] Loading data to PostgreSQL for {fecha_vigencia}")
 
         # Create partition for this date
         with psycopg.connect(self.config.postgres_dsn) as conn:
@@ -48,36 +62,163 @@ class SEPALoader:
         # Bulk load precios
         self._bulk_load_precios(df_productos, scraped_at, fecha_vigencia)
 
-        logger.info(f"✅ Loaded {len(df_productos):,} price records to PostgreSQL")
+        logger.info(
+            f"[POSTGRES] ✅ Loaded {len(df_productos):,} price records to PostgreSQL"
+        )
 
     def prepare_precios_partition(self, fecha_vigencia: date) -> None:
         """Create and truncate the partition for the given date."""
         partition_name = f"precios_{fecha_vigencia.strftime('%Y_%m_%d')}"
-        logger.info(f"Preparing partition {partition_name}...")
-        
+        logger.info(f"[POSTGRES] Preparing partition {partition_name}...")
+
         with psycopg.connect(self.config.postgres_dsn) as conn:
             with conn.cursor() as cur:
                 # 1. Create partition
                 cur.execute("SELECT create_precios_partition(%s)", (fecha_vigencia,))
-                
+
                 # 2. Truncate partition (idempotency)
-                logger.info(f"Truncating partition {partition_name}...")
+                logger.info(f"[POSTGRES] Truncating partition {partition_name}...")
                 try:
                     cur.execute(f"TRUNCATE TABLE {partition_name}")
                 except psycopg.errors.UndefinedTable:
-                    logger.warning(f"Partition {partition_name} does not exist (unexpected), skipping truncate")
-                    
+                    logger.warning(
+                        f"[POSTGRES] Partition {partition_name} does not exist (unexpected), skipping truncate"
+                    )
+
             conn.commit()
+
+    def _ensure_iceberg_table(self, df: pl.DataFrame) -> None:
+        """Ensure the Iceberg table exists, creating it if necessary."""
+        if self._iceberg_table:
+            return
+
+        if not self.catalog:
+            logger.error(
+                "[ICEBERG] Iceberg catalog not initialized, cannot create table"
+            )
+            return
+
+        table_identifier = "sepa.precios"
+        try:
+            self._iceberg_table = self.catalog.load_table(table_identifier)
+            logger.info(f"[ICEBERG] Loaded existing Iceberg table: {table_identifier}")
+        except NoSuchTableError:
+            logger.info(
+                f"[ICEBERG] Iceberg table {table_identifier} not found, creating from schema..."
+            )
+
+            # Use the dataframe schema to create the table
+            arrow_table = df.to_arrow()
+            # Note: We pass the Arrow schema directly. PyIceberg assigns field IDs.
+
+            # Create namespace if it doesn't exist (e.g. 'sepa')
+            try:
+                self.catalog.create_namespace("sepa")
+            except Exception:
+                pass  # Namespace might exist or error ignored
+
+            # 1. Create unpartitioned table first
+            self._iceberg_table = self.catalog.create_table(
+                table_identifier,
+                schema=arrow_table.schema,
+            )
+            logger.info(f"[ICEBERG] Created base Iceberg table: {table_identifier}")
+
+            # 2. Update Partition Spec: Day(fecha_vigencia)
+            # This is safer than defining it at creation for fresh schemas without IDs
+            try:
+                with self._iceberg_table.update_spec() as update:
+                    update.add_field(
+                        "fecha_vigencia",
+                        DayTransform(),
+                        partition_field_name="fecha_vigencia_day",
+                    )
+                logger.info("[ICEBERG] Updated partition spec: Day(fecha_vigencia)")
+            except Exception as e:
+                logger.error(f"Failed to set partition spec: {e}")
+                # We don't raise here to allow data loading to proceed (unpartitioned backup)
+
+    def cleanup_iceberg_partition(self, fecha_vigencia: date) -> None:
+        """
+        Delete all data for a specific date partition to ensure idempotency.
+        This enables a 'Overwrite (Delete + Append)' strategy for chunked loading.
+        """
+        table_identifier = "sepa.precios"
+        if not self._iceberg_table:
+            # Try to load if not already loaded, but don't create
+            try:
+                if self.catalog:
+                    self._iceberg_table = self.catalog.load_table(table_identifier)
+            except NoSuchTableError:
+                logger.info(
+                    f"Table {table_identifier} does not exist, skipping cleanup."
+                )
+                return
+
+        if self._iceberg_table:
+            logger.info(
+                f"[ICEBERG] Cleaning up existing data for date: {fecha_vigencia}"
+            )
+            try:
+                # Use PyIceberg expression to delete matching rows
+                self._iceberg_table.delete(
+                    delete_filter=EqualTo("fecha_vigencia", fecha_vigencia)
+                )
+                logger.info("Cleanup complete.")
+            except Exception as e:
+                logger.error(f"Failed to cleanup partition: {e}")
+                raise
+
+    def append_to_iceberg(
+        self, df: pl.DataFrame, scraped_at: datetime, fecha_vigencia: date
+    ) -> None:
+        """Append a chunk of data to the Iceberg table."""
+        if not self.catalog:
+            logger.warning("[ICEBERG] Skipping Iceberg append (catalog not init)")
+            return
+
+        # Enrich DataFrame with timestamps (same as bulk_load_precios)
+        # Fix: The table schema expects 'timestamp' (naive), but Fecha().ahora returns 'timestamptz' (aware).
+        # We assume the "local" time in AR is what we want to store as the naive timestamp value.
+        scraped_at_naive = (
+            scraped_at.replace(tzinfo=None) if scraped_at.tzinfo else scraped_at
+        )
+
+        df = df.with_columns(
+            [
+                pl.lit(scraped_at_naive).alias("scraped_at"),
+                pl.lit(fecha_vigencia).alias("fecha_vigencia"),
+            ]
+        )
+
+        # Ensure table exists (lazy load)
+        self._ensure_iceberg_table(df)
+
+        if self._iceberg_table:
+            logger.info(f"[ICEBERG] Appending {len(df)} rows to Iceberg table...")
+            self._iceberg_table.append(df.to_arrow())
+        else:
+            logger.error(
+                "[ICEBERG] Failed to load/create Iceberg table, skipping append"
+            )
 
     def upsert_comercios(self, df: pl.DataFrame) -> None:
         """Upsert comercios dimension table"""
+        self._upsert_comercios(df)  # Call internal method
+
+    def _upsert_comercios(self, df: pl.DataFrame) -> None:
+        """Upsert comercios dimension table (Internal)"""
+        if df is None or df.height == 0:
+            return
+
         with psycopg.connect(self.config.postgres_dsn) as conn:
             with conn.cursor() as cur:
                 insert_sql = """
                     INSERT INTO comercios (
                         id_comercio, id_bandera, comercio_cuit, comercio_razon_social,
-                        comercio_bandera_nombre, comercio_bandera_url, comercio_version_sepa
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        comercio_bandera_nombre, comercio_bandera_url, comercio_version_sepa,
+                        updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
                     ON CONFLICT (id_comercio, id_bandera)
                     DO UPDATE SET
                         comercio_razon_social = EXCLUDED.comercio_razon_social,
@@ -86,27 +227,28 @@ class SEPALoader:
                         updated_at = NOW()
                 """
 
-                records = (
-                    df.select(
-                        [
-                            "id_comercio",
-                            "id_bandera",
-                            "comercio_cuit",
-                            "comercio_razon_social",
-                            "comercio_bandera_nombre",
-                            "comercio_bandera_url",
-                            "comercio_version_sepa",
-                        ]
-                    ).rows()
-                )
+                records = df.select(
+                    [
+                        "id_comercio",
+                        "id_bandera",
+                        "comercio_cuit",
+                        "comercio_razon_social",
+                        "comercio_bandera_nombre",
+                        "comercio_bandera_url",
+                        "comercio_version_sepa",
+                    ]
+                ).rows()
 
                 cur.executemany(insert_sql, records)
                 conn.commit()
 
-        logger.info(f"Upserted {len(df)} comercio records")
+        logger.info(f"[POSTGRES] Upserted {len(df)} comercio records")
 
     def upsert_sucursales(self, df: pl.DataFrame) -> None:
-        """Upsert sucursales dimension table (safe, non-destructive)."""
+        self._upsert_sucursales(df)
+
+    def _upsert_sucursales(self, df: pl.DataFrame) -> None:
+        """Upsert sucursales dimension table."""
         if df is None or df.height == 0:
             logger.info("No sucursales to upsert")
             return
@@ -177,9 +319,9 @@ class SEPALoader:
                 cur.executemany(insert_sql, records)
                 conn.commit()
 
-        logger.info(f"Upserted {len(records)} sucursal records")
+        logger.info(f"[POSTGRES] Upserted {len(records)} sucursal records")
 
-    def upsert_productos_master(self, df: pl.DataFrame) -> None:
+    def _upsert_productos_master(self, df: pl.DataFrame) -> None:
         """Upsert productos_master table (populate basic master records)."""
         if df is None or df.height == 0:
             logger.info("No productos to upsert")
@@ -225,9 +367,11 @@ class SEPALoader:
                 productos_unidad_medida_presentacion,
                 productos_marca,
                 productos_cantidad_referencia,
-                productos_unidad_medida_referencia
+                productos_unidad_medida_referencia,
+                updated_at
             ) VALUES (
-                {", ".join(["%s"] * len(expected_cols))}
+                {", ".join(["%s"] * len(expected_cols))},
+                NOW()
             )
             ON CONFLICT (id_producto)
             DO UPDATE SET
@@ -245,9 +389,19 @@ class SEPALoader:
                 cur.executemany(insert_sql, records)
                 conn.commit()
 
-        logger.info(f"Upserted {len(records)} unique products into productos_master")
+        logger.info(
+            f"[POSTGRES] Upserted {len(records)} unique products into productos_master"
+        )
+
+    def upsert_productos_master(self, df: pl.DataFrame) -> None:
+        self._upsert_productos_master(df)
 
     def bulk_load_precios(
+        self, df: pl.DataFrame, scraped_at: datetime, fecha_vigencia: date
+    ) -> None:
+        return self._bulk_load_precios(df, scraped_at, fecha_vigencia)
+
+    def _bulk_load_precios(
         self, df: pl.DataFrame, scraped_at: datetime, fecha_vigencia: date
     ) -> None:
         """Bulk load precios using PostgreSQL COPY"""
@@ -280,7 +434,7 @@ class SEPALoader:
         #     ]
         # )
 
-        temp_csv = Path(f"/tmp/precios_{fecha_vigencia}.csv")
+        temp_csv = self.config.temp_dir / f"precios_{fecha_vigencia}.csv"
         df_precios.write_csv(temp_csv, separator="|")
 
         with psycopg.connect(self.config.postgres_dsn) as conn:
@@ -307,10 +461,13 @@ class SEPALoader:
 
         temp_csv.unlink()
 
-    def append_to_parquet(
-        self, df: pl.DataFrame, fecha_vigencia: date
-    ) -> None:
-        """Append chunk to a single Parquet file in MinIO/S3"""
+    def append_to_parquet(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
+        """
+        Write a chunk to a unique Parquet file in MinIO/S3 (Stateless).
+        Each chunk gets its own file to avoid S3 multipart upload complexity/risk.
+        """
+        import uuid
+
         from pyarrow import fs
 
         # Initialize S3 Filesystem
@@ -319,41 +476,32 @@ class SEPALoader:
             access_key=self.config.minio_access_key,
             secret_key=self.config.minio_secret_key,
             scheme="http",  # Use https if configured
+            region="us-east-1",  # Required for MinIO compatibility
         )
 
-        # Define path in bucket
+        chunk_id = uuid.uuid4().hex
+
+        # Define path in bucket (hive-style partitioning)
+        # s3://bucket/bronze/parquet/year=YYYY/month=MM/day=DD/chunk_{uuid}.parquet
         file_path = (
-            f"{self.config.minio_bucket}/bronze/precios/"
+            f"{self.config.minio_bucket}/bronze/parquet/"
             f"year={fecha_vigencia.year}/"
             f"month={fecha_vigencia.month:02d}/"
             f"day={fecha_vigencia.day:02d}/"
-            "precios.parquet"
+            f"chunk_{chunk_id}.parquet"
         )
 
-        # Convert to Arrow Table
-        table = df.to_arrow()
+        # Write directly to S3
+        logger.info(f"[BRONZE] Writing Parquet chunk -> {file_path}")
+        try:
+            # since we already set up PyArrow S3FileSystem, let's use PyArrow for precise control.
 
-        if self._parquet_writer is None:
-            logger.info(f"Creating new Parquet writer for s3://{file_path}")
-            
-            # Open output stream on S3
-            # We need to keep the file open across chunks, so we store the writer.
-            # PyArrow's ParquetWriter can take a filesystem object or an open file-like object.
-            # Passing the path and filesystem is usually easiest.
-            
-            self._parquet_writer = pq.ParquetWriter(
-                file_path,
-                table.schema,
-                compression="zstd",
-                filesystem=s3
-            )
-        
-        self._parquet_writer.write_table(table)
-        logger.info(f"Appended {len(df)} rows to Parquet (S3)")
+            with s3.open_output_stream(file_path) as out_stream:
+                pq.write_table(df.to_arrow(), out_stream, compression="zstd")
+        except Exception as e:
+            logger.error(f"Failed to write Parquet chunk to S3: {e}")
+            raise
 
-    def close_parquet_writer(self) -> None:
-        """Close the Parquet writer if open"""
-        if self._parquet_writer:
-            self._parquet_writer.close()
-            self._parquet_writer = None
-            logger.info("Closed Parquet writer")
+    # def close_parquet_writer(self) -> None:
+    #     """Depreciated: No-op for stateless writer"""
+    #     pass

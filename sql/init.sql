@@ -120,14 +120,14 @@ CREATE TABLE precios (
     productos_descripcion TEXT,
     productos_marca VARCHAR(255),
 
-    PRIMARY KEY (id, scraped_at)
-) PARTITION BY RANGE (scraped_at);
+    PRIMARY KEY (id, fecha_vigencia)
+) PARTITION BY RANGE (fecha_vigencia);
 
 -- Indexes on parent table (inherited by all partitions)
 CREATE INDEX idx_precios_id_producto ON precios(id_producto);
 CREATE INDEX idx_precios_sucursal ON precios(id_comercio, id_bandera, id_sucursal);
 CREATE INDEX idx_precios_comercio ON precios(id_comercio);
-CREATE INDEX idx_precios_fecha_vigencia ON precios(fecha_vigencia);
+CREATE INDEX idx_precios_scraped_at ON precios(scraped_at);
 CREATE INDEX idx_precios_marca ON precios(productos_marca) WHERE productos_marca IS NOT NULL;
 
 -- Composite indexes for common query patterns
@@ -143,15 +143,15 @@ CREATE OR REPLACE FUNCTION create_precios_partition(partition_date DATE)
 RETURNS VOID AS $$
 DECLARE
     partition_name TEXT;
-    start_ts TIMESTAMPTZ;
-    end_ts   TIMESTAMPTZ;
+    start_date DATE;
+    end_date   DATE;
 BEGIN
     -- Partition table name
     partition_name := 'precios_' || to_char(partition_date, 'YYYY_MM_DD');
 
-    -- Explicit UTC boundaries
-    start_ts := partition_date::timestamptz;            -- 00:00:00+00
-    end_ts   := (partition_date + 1)::timestamptz;      -- next day 00:00:00+00
+    -- Date boundaries (inclusive start, exclusive end)
+    start_date := partition_date;
+    end_date   := partition_date + 1;
 
     -- Check if partition exists
     IF NOT EXISTS (
@@ -166,12 +166,12 @@ BEGIN
             'CREATE TABLE %I PARTITION OF precios
              FOR VALUES FROM (%L) TO (%L)',
             partition_name,
-            start_ts,
-            end_ts
+            start_date,
+            end_date
         );
 
         RAISE NOTICE 'Created partition: % (% → %)',
-            partition_name, start_ts, end_ts;
+            partition_name, start_date, end_date;
 
     ELSE
         RAISE NOTICE 'Partition % already exists', partition_name;
