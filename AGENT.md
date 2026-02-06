@@ -100,105 +100,27 @@ The project employs a dual-layer architecture to handle scale and distinct workl
 ## 6. Key Architectural Decisions
 
 - **Polars for ETL**: Polars is used for all in-memory data transformation due to its speed and memory efficiency compared to Pandas.
-- **Application-Side Integrity**: To enable fast `COPY` inserts, foreign keys are disabled on the fact table. `validator.py` ensures no orphaned records are inserted.
+- **Application-Side Integrity**: To enable fast `COPY` inserts, foreign keys are **disabled on the fact table (`precios`)**. `validator.py` enforces referential integrity in-application before loading. Trade-off: Insert speed (+300%) vs database-enforced constraints.
 - **S3-Centric Flow**: The pipeline pulls data from the "Bronze" layer (MinIO) rather than the local file system (except in legacy/dev modes), decoupling scraping from processing.
 - **Strict Partitioning**: Database partitions are strictly aligned with the Business Date (`fecha_vigencia`) rather than ingestion time, ensuring determinism.
+- **Data Retention Policy**:
+    - **Postgres Hot Store**: 60-90 days (configurable, supports recent price lookups for web frontend)
+    - **Iceberg Cold Store**: Indefinite retention (historical analytics, annual price trends, inflation analysis)
+    - **Bronze Raw ZIP**: Indefinite retention (immutable source of truth for disaster recovery)
 
-## 7. Changelog & Debugging Log
+## 7. Storage Projections
 
-### 2025-11-20: Ingestion Pipeline Implementation (SPC-3)
+| Layer | Size/Year | Retention | Purpose |
+|:---|:---|:---|:---|
+| **Bronze Raw ZIP** | 113 GB | Indefinite | Immutable Archive |
+| **Bronze Parquet** | 39 GB | Indefinite | Fast Replay Source |
+| **Silver Iceberg** | 27 GB | Indefinite | Analytics Ready |
+| **Postgres Hot** | 330 GB | 60-90 Days | Web App Queries (Auto-truncated) |
 
-**Major Refactoring**:
-- Split monolithic `ingestion.py` into modular components: `config.py`, `extractor.py`, `validator.py`, `loader.py`, `pipeline.py`.
+## 8. Next Steps: Phase 4 - Orchestration
 
-**Bugs Fixed**:
-1.  **`NotNullViolation` (Footer Detection)**: Fixed by `_drop_footer_rows` regex.
-2.  **`CSV malformed` Warnings**: Fixed by `quote_char=None`.
-3.  **`ForeignKeyViolation`**: Fixed by strict referential integrity checks in `validator.py`.
-
-### 2026-01-03: Lakehouse Phase 2 - Iceberg Integration (Silver Layer)
-
-**Goal**: Load daily price data into an Apache Iceberg table (`sepa.precios`) stored in MinIO.
-
-**Major Changes**:
-- **Dependencies**: Added `pyiceberg[duckdb,s3fs,sql-postgres]`.
-- **Loader**: Enhanced `SEPALoader` to initialize PyIceberg Catalog and append data.
-
-**Bugs Fixed**:
-1.  **`AWS Error ACCESS_DENIED`**: Fixed by adding `"s3.signer": "s3v4"` to catalog config.
-
-### 2026-01-03: Lakehouse Phase 3 - Bronze Layer Decoupling
-
-**Goal**: Move to a "Cloud-Native" architecture.
-
-**Key Changes**:
-*   **`src/sepa_pipeline/scraper.py`**: Now uploads Raw ZIPs to `s3://sepa-lakehouse/bronze/raw`.
-*   **`src/sepa_pipeline/extractor.py`**: Added `fetch_from_bronze` to download from S3.
-
-**Bugs Fixed**:
-*   **`pyarrow.fs.copy_file` API Error**: Replaced with manual `open_input_stream`.
-
-### 2026-01-04: Lakehouse Phase 3b - Iceberg Partitioning Optimization
-
-**Goal**: Partition `sepa.precios` by `Day(fecha_vigencia)`.
-
-**Key Changes**:
-- **Partitioning**: Applied `DayTransform` on `fecha_vigencia` in Iceberg.
-- **Dependencies**: Added `pyiceberg[pyiceberg-core]`.
-
-**Bugs Fixed**:
-- **Strict Schema Validation**: Fixed crash when creating tables from generic Arrow schemas.
-
-### 2026-01-06: Robustness, CLI & Schema Fixes (Phase 4-6)
-
-**Goal**: Enhance operational control and data quality, fixing timezone-related partitioning issues.
-
-**Key Changes**:
-- **CLI Implementation**: Refactored `pipeline.py` to support `argparse` (`--date`, `--stages`).
-- **Bootstrap Utility**: Added `bootstrap_lakehouse.py` to automate bucket creation.
-- **Strict Validation**: Moved validation *inside* the processing loop to prevent bad data merges.
-- **Schema Migration**: Changed `precios` partitioning from `scraped_at` (Timestamp) to `fecha_vigencia` (Date).
-
-**Bugs Fixed**:
-- **Timezone Drift**:
-    - **Issue**: Timestamp partitioning caused late-night scrapes (UTC) to land in tomorrow's partition.
-    - **Fix**: Switched to Date-based partitioning (`fecha_vigencia`).
-- **Schema Contamination**:
-    - **Issue**: `pl.concat` failed on mismatched chunks.
-    - **Fix**: Validate-then-merge strategy implemented.
-
-
-
-### 2026-01-25: Robustness & Bronze Parquet (Phase 7)
-
-**Goal**: Mitigate data loss risks, harden the pipeline against missing data, and optimize Bronze Layer for fast replay.
-
-- **Scraper Hardening**: Modified `SepaScraper._parse_html` to extract the visible date string from the `.package-info` HTML block (e.g., `Precios SEPA Minoristas viernes, 2026-01-23`).
-- **Strict Verification**: The scraper now compares the extracted HTML date with the target `iso_date`. If they mismatch, the process aborts immediately to avoid downloading old or incorrect files.
-**Key Changes**:
-- **Bronze Parquet Chunking**: Refactored `loader.py` to write "Stateless" Parquet chunks (`chunk_{uuid}.parquet`) directly to `s3://sepa-lakehouse/bronze/parquet/`. This avoids maintaining fragile open S3 connections for long durations.
-- **Scraper Hardening**: (See above) implemented strict date verification by parsing HTML descriptions.
-- **Graceful Failure**: Updates `extractor.py` and `pipeline.py` to detect missing Bronze data and exit with a `WARNING` (Status: SCKIPPED) rather than crashing with a traceback.
-
-**Bugs Fixed (Phase 7 - Resource Management)**:
-1.  **Disk Exhaustion (`No space left on device`)**:
-    - **Issue**: Pipeline was downloading massive ZIPs to `/tmp` (root/RAM disk) and failing to clean up, crashing the OS.
-    - **Fix**: Implemented strict `try...finally { shutil.rmtree }` cleanup in `pipeline.py` and added `config.SEPA_TEMP_DIR` to support offloading temp files to local disk.
-2.  **OOM Crash (Querying)**:
-    - **Issue**: `query_table.py` loaded the entire Iceberg table history into RAM (`to_arrow()`) causing a crash on 32GB RAM machines.
-    - **Fix**: Optimized query to use column pruning (`selected_fields`) and added limits for sampling.
-
-**Storage Metrics (Projected)**:
-| Layer | Size/Year | Note |
-|:---|:---|:---|
-| **Bronze Raw** | 113 GB | Immutable Archive |
-| **Bronze Parquet** | 39 GB | Fast Replay Source |
-| **Silver Iceberg** | 27 GB | Analytics Ready |
-| **Postgres (90 Days)** | 330 GB | Hot Store (Truncated) |
-
-## 8. Next Steps: Phase 8 - Orchestration
-
-With the core pipeline hardened, the focus shifts to automation and monitoring:
-- **Orchestration Tool**: Implement Airflow or Dagster to manage the daily schedule.
-- **Schema Evolution**: Define policies for handling new columns in CSVs (currently implicit).
-- **Retention Policies**: Automate the truncation of old Postgres partitions.
+With the core ETL pipeline hardened (Phase SPC-3 ~95% complete), the focus shifts to automation:
+- **Orchestration Tool**: Implement Airflow to manage daily schedule, retry logic, and monitoring.
+- **Loader Decoupling**: Split Postgres and Iceberg loaders into separate modules (currently flag-based in `loader.py`).
+- **Schema Evolution**: Define policies for handling new columns in CSVs (see `OPERATIONS.md`).
+- **Retention Automation**: Schedule `drop_old_precios_partitions()` task in Airflow.

@@ -30,7 +30,9 @@ MANIFEST
 # doc
 PLAN.md
 EXPLAINER.md
-PLAN.md
+DOCS.md
+CHANGELOG.md
+ag-*.md
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -152,3 +154,5 @@ data/
 .agent/
 .pyiceberg.yaml
 tmp/
+sql/scratchpad.sql
+
