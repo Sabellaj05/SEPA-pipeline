@@ -9,7 +9,7 @@ import polars as pl
 import psycopg
 import pyarrow.parquet as pq
 from pyiceberg.catalog import Catalog, load_catalog
-from pyiceberg.exceptions import NoSuchTableError
+from pyiceberg.exceptions import NamespaceAlreadyExistsError, NoSuchTableError
 from pyiceberg.expressions import EqualTo
 from pyiceberg.table import Table
 from pyiceberg.transforms import DayTransform
@@ -84,7 +84,6 @@ class SEPALoader:
                     logger.warning(
                         f"[POSTGRES] Partition {partition_name} does not exist (unexpected), skipping truncate"
                     )
-
             conn.commit()
 
     def _ensure_iceberg_table(self, df: pl.DataFrame) -> None:
@@ -114,8 +113,8 @@ class SEPALoader:
             # Create namespace if it doesn't exist (e.g. 'sepa')
             try:
                 self.catalog.create_namespace("sepa")
-            except Exception:
-                pass  # Namespace might exist or error ignored
+            except NamespaceAlreadyExistsError as e:
+                logger.error(f"Error: {e}")
 
             # 1. Create unpartitioned table first
             self._iceberg_table = self.catalog.create_table(
@@ -321,6 +320,9 @@ class SEPALoader:
 
         logger.info(f"[POSTGRES] Upserted {len(records)} sucursal records")
 
+    def upsert_productos_master(self, df: pl.DataFrame) -> None:
+        self._upsert_productos_master(df)
+
     def _upsert_productos_master(self, df: pl.DataFrame) -> None:
         """Upsert productos_master table (populate basic master records)."""
         if df is None or df.height == 0:
@@ -393,9 +395,6 @@ class SEPALoader:
             f"[POSTGRES] Upserted {len(records)} unique products into productos_master"
         )
 
-    def upsert_productos_master(self, df: pl.DataFrame) -> None:
-        self._upsert_productos_master(df)
-
     def bulk_load_precios(
         self, df: pl.DataFrame, scraped_at: datetime, fecha_vigencia: date
     ) -> None:
@@ -426,13 +425,6 @@ class SEPALoader:
                 pl.lit(fecha_vigencia).alias("fecha_vigencia"),
             ]
         )
-
-        # df_precios = df.with_columns(
-        #     [
-        #         pl.lit(scraped_at).alias("scraped_at"),
-        #         pl.lit(fecha_vigencia).alias("fecha_vigencia"),
-        #     ]
-        # )
 
         temp_csv = self.config.temp_dir / f"precios_{fecha_vigencia}.csv"
         df_precios.write_csv(temp_csv, separator="|")
