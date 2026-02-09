@@ -2,79 +2,15 @@
 SEPA Data Validator
 Handles schema validation and data cleaning.
 """
+
 from typing import Dict, Tuple
 
 import polars as pl
 
+from sepa_pipeline.config import get_schema_dict
 from sepa_pipeline.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-def get_schema_dict(table_type: str) -> Dict[str, pl.Utf8]:
-    """
-    Define explicit schemas for each table type to avoid inference issues.
-    Read everything as strings initially, convert in validation.
-    """
-    comercio_schema: Dict = {
-        "id_comercio": pl.Utf8,
-        "id_bandera": pl.Utf8,
-        "comercio_cuit": pl.Utf8,
-        "comercio_razon_social": pl.Utf8,
-        "comercio_bandera_nombre": pl.Utf8,
-        "comercio_bandera_url": pl.Utf8,
-        "comercio_ultima_actualizacion": pl.Utf8,
-        "comercio_version_sepa": pl.Utf8,
-    }
-    sucursal_schema: Dict = {
-        "id_comercio": pl.Utf8,
-        "id_bandera": pl.Utf8,
-        "id_sucursal": pl.Utf8,
-        "sucursales_nombre": pl.Utf8,
-        "sucursales_tipo": pl.Utf8,
-        "sucursales_calle": pl.Utf8,
-        "sucursales_numero": pl.Utf8,
-        "sucursales_latitud": pl.Utf8,
-        "sucursales_longitud": pl.Utf8,
-        "sucursales_observaciones": pl.Utf8,
-        "sucursales_barrio": pl.Utf8,
-        "sucursales_codigo_postal": pl.Utf8,
-        "sucursales_localidad": pl.Utf8,
-        "sucursales_provincia": pl.Utf8,
-        "sucursales_lunes_horario_atencion": pl.Utf8,
-        "sucursales_martes_horario_atencion": pl.Utf8,
-        "sucursales_miercoles_horario_atencion": pl.Utf8,
-        "sucursales_jueves_horario_atencion": pl.Utf8,
-        "sucursales_viernes_horario_atencion": pl.Utf8,
-        "sucursales_sabado_horario_atencion": pl.Utf8,
-        "sucursales_domingo_horario_atencion": pl.Utf8,
-    }
-    producto_schema: Dict = {
-        "id_comercio": pl.Utf8,
-        "id_bandera": pl.Utf8,
-        "id_sucursal": pl.Utf8,
-        "id_producto": pl.Utf8,
-        "productos_ean": pl.Utf8,
-        "productos_descripcion": pl.Utf8,
-        "productos_cantidad_presentacion": pl.Utf8,
-        "productos_unidad_medida_presentacion": pl.Utf8,
-        "productos_marca": pl.Utf8,
-        "productos_precio_lista": pl.Utf8,
-        "productos_precio_referencia": pl.Utf8,
-        "productos_cantidad_referencia": pl.Utf8,
-        "productos_unidad_medida_referencia": pl.Utf8,
-        "productos_precio_unitario_promo1": pl.Utf8,
-        "productos_leyenda_promo1": pl.Utf8,
-        "productos_precio_unitario_promo2": pl.Utf8,
-        "productos_leyenda_promo2": pl.Utf8,
-    }
-    if table_type == "comercio":
-        return comercio_schema
-    elif table_type == "sucursales":
-        return sucursal_schema
-    elif table_type == "productos":
-        return producto_schema
-    else:
-        raise ValueError(f"Unknown table type: {table_type}")
 
 
 class SEPAValidator:
@@ -115,10 +51,9 @@ class SEPAValidator:
         # If first column contains footer text, filter it out
         # Check for "ltima actualizaci"
         # to handle both "Ultima" and "Última" and case variations
-        mask_footer = (
-            pl.col(first_column).is_not_null()
-            & pl.col(first_column).str.to_lowercase().str.contains("ltima actualizaci")
-        )
+        mask_footer = pl.col(first_column).is_not_null() & pl.col(
+            first_column
+        ).str.to_lowercase().str.contains("ltima actualizaci")
         # If first column doesn't exist or not string,
         # the expression will be fine because we always cast in callers.
         filtered = df.filter(~mask_footer)
