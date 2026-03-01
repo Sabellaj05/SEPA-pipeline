@@ -10,7 +10,7 @@ URL = "https://datos.produccion.gob.ar/dataset/sepa-precios"
 DATA_DIR = "data"
 
 
-async def main() -> None:
+async def main() -> int:
     """
     Initializes and runs the scraper, uploads the raw files to the bronze layer
     then logs the outcome.
@@ -23,8 +23,10 @@ async def main() -> None:
 
         if success:
             logger.info("=== Scraping completed successfully ===")
+            return 0
         else:
             logger.info("=== Scraping failed ===")
+            return 1
 
 
 if __name__ == "__main__":
