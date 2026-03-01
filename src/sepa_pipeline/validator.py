@@ -3,7 +3,7 @@ SEPA Data Validator
 Handles schema validation and data cleaning.
 """
 
-from typing import Dict, Tuple
+from typing import Tuple
 
 import polars as pl
 

@@ -33,7 +33,7 @@ def process_daily_data(
         stages: List of stages to run ['postgres', 'iceberg']. If None, runs all.
     """
     if stages is None:
-        stages = ["postgres", "iceberg"]
+        stages = ["postgres", "iceberg", "parquet"]
 
     logger.info(f"Starting SEPA pipeline for {target_date} | Stages: {stages}")
 
@@ -68,7 +68,7 @@ def process_daily_data(
         # Initialize loaders
         postgres_loader = PostgresLoader(config) if "postgres" in stages else None
         iceberg_loader = IcebergLoader(config) if "iceberg" in stages else None
-        parquet_loader = ParquetLoader(config)
+        parquet_loader = ParquetLoader(config) if "parquet" in stages else None
 
         # --- Phase 1: Load Dimensions (Comercios & Sucursales) ---
         # Only if Postges is enabled or we decide dims are needed for both
@@ -203,7 +203,8 @@ def process_daily_data(
             # Ensure Iceberg idempotency (overwrite strategy)
             iceberg_loader.setup(target_date)
 
-        parquet_loader.setup(target_date)
+        if parquet_loader:
+            parquet_loader.setup(target_date)
 
         # --- Phase 3: Chunked Product & Price Loading ---
         logger.info("Phase 3: Loading Products and Prices (Chunked)")
@@ -251,7 +252,8 @@ def process_daily_data(
                         iceberg_loader.load(df_producto, target_date)
 
                     # Archive to Parquet (Bronze Layer)
-                    parquet_loader.load(df_producto, target_date)
+                    if parquet_loader:
+                        parquet_loader.load(df_producto, target_date)
 
                     total_prices_loaded += df_producto.height
 
@@ -301,7 +303,7 @@ def parse_args() -> argparse.Namespace:
         "--stages",
         type=str,
         help="Comma-separated stages to run: postgres,iceberg (default: all)",
-        default="postgres,iceberg",
+        default="postgres,iceberg,parquet",
     )
     return parser.parse_args()
 
@@ -313,8 +315,6 @@ if __name__ == "__main__":
 
     config = SEPAConfig()
 
-    # Determine target date from CLI or default
-    # But wait, we need to call parse_args() first.
     if len(sys.argv) > 1:
         args = parse_args()
         if args.date:
@@ -329,10 +329,9 @@ if __name__ == "__main__":
 
         stages = [s.strip().lower() for s in args.stages.split(",")]
     else:
-        # Default behavior if no args provided (backward compatible-ish)
-        # But we want to encourage CLI usage.
+        # Default behavior if no args provided
         target_date = Fecha().ahora.date()
-        stages = ["postgres", "iceberg"]
+        stages = ["postgres", "iceberg", "parquet"]
 
     logger.info(f"Arguments -> Date: {target_date}, Stages: {stages}")
 
