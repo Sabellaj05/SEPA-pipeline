@@ -266,14 +266,14 @@ class SepaScraper:
             with zipfile.ZipFile(zip_path, 'r') as master_zf:
                 # Find the first inner zip (e.g., sepa_coto.zip)
                 inner_zips = [f for f in master_zf.namelist() if f.endswith('.zip')]
-                
+
                 if not inner_zips:
                     logger.warning("No nested '.zip' files found inside Master ZIP to validate date.")
                     return True # Fail open if structure unexpected
-                    
+
                 inner_zip_name = inner_zips[0]
                 logger.info(f"Inspecting nested ZIP: {inner_zip_name}")
-                
+
                 # Open the inner ZIP in memory
                 with master_zf.open(inner_zip_name, 'r') as inner_file:
                     with zipfile.ZipFile(io.BytesIO(inner_file.read())) as inner_zf:
@@ -282,28 +282,28 @@ class SepaScraper:
                         if not comercio_files:
                             logger.warning(f"No 'comercio.csv' found inside {inner_zip_name}.")
                             return True
-                            
+
                         comercio_filename = comercio_files[0]
-                        
+
                         # Read comercio.csv block by block
                         with inner_zf.open(comercio_filename, 'r') as f:
                             wrapper = io.TextIOWrapper(f, encoding='utf-8-sig', errors='replace')
-                            
+
                             for line in wrapper:
                                 if "ltima actualizaci" in line.lower():
                                     logger.info(f"Found footer metadata row: '{line.strip()}'")
-                                    
+
                                     # Extract the YYYY-MM-DD
                                     date_match = re.search(r"(\d{4}-\d{2}-\d{2})", line)
                                     if date_match:
                                         extracted_date_str = date_match.group(1)
                                         target_date_str = self.fecha.hoy
-                                        
+
                                         from datetime import datetime, timedelta
                                         extracted_d = datetime.strptime(extracted_date_str, "%Y-%m-%d").date()
                                         target_d = datetime.strptime(target_date_str, "%Y-%m-%d").date()
-                                        
-                                        # Data is valid if it's from today or yesterday. 
+
+                                        # Data is valid if it's from today or yesterday.
                                         # If it's older than yesterday, it's stale.
                                         if extracted_d < (target_d - timedelta(days=1)):
                                             logger.error(
@@ -314,7 +314,7 @@ class SepaScraper:
                                         else:
                                             logger.info(f"Intrinsic validation passed: {extracted_date_str} is fresh enough for {target_date_str}")
                                             return True
-                                    
+
                             logger.warning("Footer timestamp 'Última actualización' not found in comercio.csv. Attempting to proceed without intrinsic date validation.")
                             return True
 
