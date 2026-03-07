@@ -71,56 +71,91 @@ def scan_bronze_dates():
                     logger.warning(f"No nested '.zip' files found inside {filename}")
                     continue
 
-                inner_zip_name = inner_zips[0]
+                sample_size = min(20, len(inner_zips))
+                sampled_zips = inner_zips[:sample_size]
 
-                # Open the inner ZIP in memory
-                with master_zf.open(inner_zip_name, "r") as inner_file:
-                    with zipfile.ZipFile(io.BytesIO(inner_file.read())) as inner_zf:
-                        comercio_files = [
-                            f for f in inner_zf.namelist() if f.endswith("comercio.csv")
-                        ]
-                        if not comercio_files:
-                            logger.warning(
-                                f"No 'comercio.csv' found inside {inner_zip_name}."
-                            )
-                            continue
+                valid_count = 0
+                stale_count = 0
+                unknown_count = 0
 
-                        comercio_filename = comercio_files[0]
-                        extracted_date = None
+                from datetime import datetime, timedelta
 
-                        # Read comercio.csv block by block
-                        with inner_zf.open(comercio_filename, "r") as f:
-                            wrapper = io.TextIOWrapper(
-                                f, encoding="utf-8-sig", errors="replace"
-                            )
-                            for line in wrapper:
-                                if "ltima actualizaci" in line.lower():
-                                    date_match = re.search(r"(\d{4}-\d{2}-\d{2})", line)
-                                    if date_match:
-                                        extracted_date = date_match.group(1)
-                                        break
+                target_d = datetime.strptime(filename_date, "%Y-%m-%d").date()
 
-                        if extracted_date:
-                            if extracted_date != filename_date:
-                                logger.error(
-                                    f"DISCREPANCY DETECTED: {filename} filename says {filename_date} but data inside is {extracted_date}"
-                                )
-                                discrepancies.append(
-                                    {
-                                        "file": s3_path,
-                                        "filename_date": filename_date,
-                                        "internal_date": extracted_date,
-                                    }
-                                )
-                            else:
-                                logger.info(
-                                    f"Clean match: {filename_date} == {extracted_date}"
-                                )
-                                successes += 1
-                        else:
-                            logger.warning(
-                                f"Could not find 'Última actualización' in {filename}"
-                            )
+                for inner_zip_name in sampled_zips:
+                    try:
+                        with master_zf.open(inner_zip_name, "r") as inner_file:
+                            with zipfile.ZipFile(
+                                io.BytesIO(inner_file.read())
+                            ) as inner_zf:
+                                comercio_files = [
+                                    f
+                                    for f in inner_zf.namelist()
+                                    if f.endswith("comercio.csv")
+                                ]
+                                if not comercio_files:
+                                    unknown_count += 1
+                                    continue
+
+                                comercio_filename = comercio_files[0]
+                                date_found = False
+
+                                with inner_zf.open(comercio_filename, "r") as f:
+                                    wrapper = io.TextIOWrapper(
+                                        f, encoding="utf-8-sig", errors="replace"
+                                    )
+                                    for line in wrapper:
+                                        if "ltima actualizaci" in line.lower():
+                                            date_match = re.search(
+                                                r"(\d{4}-\d{2}-\d{2})", line
+                                            )
+                                            if date_match:
+                                                extracted_date_str = date_match.group(1)
+                                                extracted_d = datetime.strptime(
+                                                    extracted_date_str, "%Y-%m-%d"
+                                                ).date()
+
+                                                date_found = True
+                                                if extracted_d < (
+                                                    target_d - timedelta(days=1)
+                                                ):
+                                                    stale_count += 1
+                                                else:
+                                                    valid_count += 1
+                                                break
+
+                                if not date_found:
+                                    unknown_count += 1
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to parse nested ZIP {inner_zip_name} "
+                            f"in {filename}: {e}"
+                        )
+                        unknown_count += 1
+
+                # Evaluate Consensus
+                if stale_count > valid_count:
+                    logger.error(
+                        f"DISCREPANCY DETECTED: {filename} filename says "
+                        f"{filename_date} but majority data is stale "
+                        f"(Valid: {valid_count}, Stale: {stale_count}, "
+                        f"Unknown: {unknown_count})"
+                    )
+                    discrepancies.append(
+                        {
+                            "file": s3_path,
+                            "filename_date": filename_date,
+                            "consensus": "STALE",
+                            "stats": f"Valid: {valid_count}, Stale: {stale_count}",
+                        }
+                    )
+                else:
+                    logger.info(
+                        f"Clean match: {filename_date} has predominantly fresh data "
+                        f"(Valid: {valid_count}, Stale: {stale_count}, "
+                        f"Unknown: {unknown_count})"
+                    )
+                    successes += 1
 
         except Exception as e:
             logger.error(f"Error processing {filename}: {e}")
@@ -134,7 +169,8 @@ def scan_bronze_dates():
         logger.info("\n--- LIST OF DISCREPANCIES ---")
         for d in discrepancies:
             logger.info(
-                f"Path: {d['file']} | Filename Date: {d['filename_date']} | Actual Data Date: {d['internal_date']}"
+                f"Path: {d['file']} | Filename Date: {d['filename_date']} | "
+                f"Consensus: {d['consensus']} ({d['stats']})"
             )
 
 

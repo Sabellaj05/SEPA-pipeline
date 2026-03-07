@@ -259,68 +259,90 @@ class SepaScraper:
     def _validate_zip_date(self, zip_path: Path) -> bool:
         """
         Extracts the ISO date from the 'comercio.csv' footer inside the downloaded ZIP.
-        If the intrinsic date is older than today ('target_date'), returns False to abort.
+        Samples up to 20 nested zips to determine if the overall package is fresh
+        based on a majority vote.
         """
         logger.info("Performing intrinsic date validation inside downloaded Master ZIP...")
         try:
             with zipfile.ZipFile(zip_path, 'r') as master_zf:
-                # Find the first inner zip (e.g., sepa_coto.zip)
                 inner_zips = [f for f in master_zf.namelist() if f.endswith('.zip')]
 
                 if not inner_zips:
                     logger.warning("No nested '.zip' files found inside Master ZIP to validate date.")
-                    return True # Fail open if structure unexpected
+                    return True  # Fail open if structure unexpected
 
-                inner_zip_name = inner_zips[0]
-                logger.info(f"Inspecting nested ZIP: {inner_zip_name}")
+                # Sample up to 20 nested zips to avoid false negatives from single stores
+                # that haven't updated their data, while avoiding unzipping all 200MiB.
+                sample_size = min(20, len(inner_zips))
+                sampled_zips = inner_zips[:sample_size]
+                
+                valid_count = 0
+                stale_count = 0
+                unknown_count = 0
+                
+                logger.info(f"Sampling {sample_size} nested ZIPs for freshness consensus...")
 
-                # Open the inner ZIP in memory
-                with master_zf.open(inner_zip_name, 'r') as inner_file:
-                    with zipfile.ZipFile(io.BytesIO(inner_file.read())) as inner_zf:
-                        # Find comercio.csv inside the nested zip
-                        comercio_files = [f for f in inner_zf.namelist() if f.endswith('comercio.csv')]
-                        if not comercio_files:
-                            logger.warning(f"No 'comercio.csv' found inside {inner_zip_name}.")
-                            return True
+                target_date_str = self.fecha.hoy
+                from datetime import datetime, timedelta
+                target_d = datetime.strptime(target_date_str, "%Y-%m-%d").date()
 
-                        comercio_filename = comercio_files[0]
+                for inner_zip_name in sampled_zips:
+                    # Open the inner ZIP in memory
+                    try:
+                        with master_zf.open(inner_zip_name, 'r') as inner_file:
+                            with zipfile.ZipFile(io.BytesIO(inner_file.read())) as inner_zf:
+                                comercio_files = [f for f in inner_zf.namelist() if f.endswith('comercio.csv')]
+                                if not comercio_files:
+                                    unknown_count += 1
+                                    continue
+                                    
+                                comercio_filename = comercio_files[0]
+                                date_found = False
+                                
+                                # Read comercio.csv block by block
+                                with inner_zf.open(comercio_filename, 'r') as f:
+                                    wrapper = io.TextIOWrapper(f, encoding='utf-8-sig', errors='replace')
+                                    for line in wrapper:
+                                        if "ltima actualizaci" in line.lower():
+                                            date_match = re.search(r"(\d{4}-\d{2}-\d{2})", line)
+                                            if date_match:
+                                                extracted_date_str = date_match.group(1)
+                                                extracted_d = datetime.strptime(extracted_date_str, "%Y-%m-%d").date()
+                                                
+                                                date_found = True
+                                                if extracted_d < (target_d - timedelta(days=1)):
+                                                    stale_count += 1
+                                                else:
+                                                    valid_count += 1
+                                                break # Stop reading this CSV once date is found
+                                                
+                                if not date_found:
+                                    unknown_count += 1
+                                    
+                    except Exception as e:
+                        logger.warning(f"Failed to parse nested ZIP {inner_zip_name}: {e}")
+                        unknown_count += 1
 
-                        # Read comercio.csv block by block
-                        with inner_zf.open(comercio_filename, 'r') as f:
-                            wrapper = io.TextIOWrapper(f, encoding='utf-8-sig', errors='replace')
-
-                            for line in wrapper:
-                                if "ltima actualizaci" in line.lower():
-                                    logger.info(f"Found footer metadata row: '{line.strip()}'")
-
-                                    # Extract the YYYY-MM-DD
-                                    date_match = re.search(r"(\d{4}-\d{2}-\d{2})", line)
-                                    if date_match:
-                                        extracted_date_str = date_match.group(1)
-                                        target_date_str = self.fecha.hoy
-
-                                        from datetime import datetime, timedelta
-                                        extracted_d = datetime.strptime(extracted_date_str, "%Y-%m-%d").date()
-                                        target_d = datetime.strptime(target_date_str, "%Y-%m-%d").date()
-
-                                        # Data is valid if it's from today or yesterday.
-                                        # If it's older than yesterday, it's stale.
-                                        if extracted_d < (target_d - timedelta(days=1)):
-                                            logger.error(
-                                                f"Intrinsic validation failed! Portal claims {target_date_str} "
-                                                f"but actual data inside {inner_zip_name} is stale (up to {extracted_date_str})."
-                                            )
-                                            return False
-                                        else:
-                                            logger.info(f"Intrinsic validation passed: {extracted_date_str} is fresh enough for {target_date_str}")
-                                            return True
-
-                            logger.warning("Footer timestamp 'Última actualización' not found in comercio.csv. Attempting to proceed without intrinsic date validation.")
-                            return True
+                # Evaluate Consensus
+                logger.info(
+                    f"Consensus Results -> Valid: {valid_count}, Stale: {stale_count}, "
+                    f"Unknown: {unknown_count} (out of {sample_size} sampled)"
+                )
+                
+                # We only reject the entire package if we found more definitively stale files than valid ones
+                if stale_count > valid_count:
+                    logger.error(
+                        f"Intrinsic validation failed! Master package is predominately stale. "
+                        f"Rejecting {zip_path.name}."
+                    )
+                    return False
+                else:
+                    logger.info("Package passed majority vote validation.")
+                    return True
 
         except Exception as e:
             logger.error(f"Error during intrinsic ZIP validation: {e}")
-            return True # Fail open on unexpected ZIP parsing errors
+            return True  # Fail open on unexpected ZIP parsing errors
 
     async def hurtar_datos(self, min_file_size_mb: int = 150) -> bool:
         """
