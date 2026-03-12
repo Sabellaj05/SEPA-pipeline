@@ -14,6 +14,7 @@ from sepa_pipeline.extractor import SEPAExtractor
 from sepa_pipeline.loaders.postgres_loader import PostgresLoader
 from sepa_pipeline.loaders.iceberg_loader import IcebergLoader
 from sepa_pipeline.loaders.parquet_loader import ParquetLoader
+from sepa_pipeline.loaders.bigquery_loader import BigQueryLoader
 from sepa_pipeline.utils.fecha import Fecha
 from sepa_pipeline.utils.logger import get_logger
 from sepa_pipeline.validator import SEPAValidator, get_schema_dict
@@ -30,10 +31,10 @@ def process_daily_data(
     Args:
         target_date: Date to process
         config: Configuration object
-        stages: List of stages to run ['postgres', 'iceberg']. If None, runs all.
+        stages: List of stages to run ['postgres', 'iceberg', 'parquet', 'bigquery']. If None, runs all.
     """
     if stages is None:
-        stages = ["postgres", "iceberg", "parquet"]
+        stages = ["postgres", "iceberg", "parquet", "bigquery"]
 
     logger.info(f"Starting SEPA pipeline for {target_date} | Stages: {stages}")
 
@@ -69,6 +70,7 @@ def process_daily_data(
         postgres_loader = PostgresLoader(config) if "postgres" in stages else None
         iceberg_loader = IcebergLoader(config) if "iceberg" in stages else None
         parquet_loader = ParquetLoader(config) if "parquet" in stages else None
+        bigquery_loader = BigQueryLoader(config) if "bigquery" in stages else None
 
         # --- Phase 1: Load Dimensions (Comercios & Sucursales) ---
         # Only if Postges is enabled or we decide dims are needed for both
@@ -206,6 +208,9 @@ def process_daily_data(
         if parquet_loader:
             parquet_loader.setup(target_date)
 
+        if bigquery_loader:
+            bigquery_loader.setup(target_date)
+
         # --- Phase 3: Chunked Product & Price Loading ---
         logger.info("Phase 3: Loading Products and Prices (Chunked)")
 
@@ -255,6 +260,10 @@ def process_daily_data(
                     if parquet_loader:
                         parquet_loader.load(df_producto, target_date)
 
+                    # Export to BigQuery Data Lakehouse
+                    if bigquery_loader:
+                        bigquery_loader.load(df_producto, target_date)
+
                     total_prices_loaded += df_producto.height
 
             except Exception as e:
@@ -302,8 +311,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--stages",
         type=str,
-        help="Comma-separated stages to run: postgres,iceberg (default: all)",
-        default="postgres,iceberg,parquet",
+        help="Comma-separated stages to run: postgres,iceberg,parquet,bigquery (default: all)",
+        default="postgres,iceberg,parquet,bigquery",
     )
     return parser.parse_args()
 
@@ -331,7 +340,7 @@ if __name__ == "__main__":
     else:
         # Default behavior if no args provided
         target_date = Fecha().ahora.date()
-        stages = ["postgres", "iceberg", "parquet"]
+        stages = ["postgres", "iceberg", "parquet", "bigquery"]
 
     logger.info(f"Arguments -> Date: {target_date}, Stages: {stages}")
 
