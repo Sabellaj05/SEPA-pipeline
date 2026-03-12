@@ -146,6 +146,11 @@ class SEPAConfig:
             "MINIO_BUCKET": self.minio_bucket,
         }
 
+        # GCP configurations for Biglake (optional for non-GCP runs, but required for BigQuery Loader)
+        self.gcp_project: str | None = os.getenv("GCP_PROJECT", "sepa-lakehouse42")
+        self.gcp_dataset: str | None = os.getenv("GCP_DATASET", "silver")
+        self.gcp_bucket: str | None = os.getenv("GCP_BUCKET", "sepa-lakehouse-silver-74dbadf7")
+
         missing = [key for key, value in required.items() if not value]
         if missing:
             raise ValueError(
@@ -187,6 +192,18 @@ class SEPAConfig:
             # "s3.path-style-access": "true", # PyArrow might default correctly with custom endpoint, but let's try WITHOUT explicit first if PyArrow script worked without it.
             # actually, PyArrow script didn't set it. let's comment it out to match.
             "s3.signer": "s3v4",  # Force S3v4 signing for MinIO compatibility
+        }
+
+    @property
+    def bigquery_catalog_config(self) -> dict:
+        """Configuration for PyIceberg BigQuery Catalog"""
+        return {
+            "type": "bigquery",
+            "gcp.project-id": self.gcp_project,
+            "gcp.bigquery.project-id": self.gcp_project,
+            # BQ catalog creates metadata here and creates BQ tables referencing it.
+            # MUST be a gs:// URI so BigLake can access it natively.
+            "warehouse": f"gs://{self.gcp_bucket}/warehouse",
         }
 
     def get_schema(self, table_type: str) -> Dict[str, type[pl.DataType]]:

@@ -124,7 +124,8 @@ module = [
     "httpx.*",
     "bs4.*",
     "tqdm.*",
-    "tenacity.*"
+    "tenacity.*",
+    "pyiceberg.*"
 ]
 ignore_missing_imports = true
 
