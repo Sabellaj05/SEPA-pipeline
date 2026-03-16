@@ -72,11 +72,27 @@ def process_daily_data(
         parquet_loader = ParquetLoader(config) if "parquet" in stages else None
         bigquery_loader = BigQueryLoader(config) if "bigquery" in stages else None
 
-        # --- Phase 1: Load Dimensions (Comercios & Sucursales) ---
+        # --- Phase 1: Prepare Partition (Idempotent Setup) ---
+        logger.info("Phase 1: Preparing Partitions")
+
+        if postgres_loader:
+            postgres_loader.setup(target_date)
+
+        if iceberg_loader:
+            # Ensure Iceberg idempotency (overwrite strategy)
+            iceberg_loader.setup(target_date)
+
+        if parquet_loader:
+            parquet_loader.setup(target_date)
+
+        if bigquery_loader:
+            bigquery_loader.setup(target_date)
+
+        # --- Phase 2: Load Dimensions (Comercios & Sucursales) ---
         # Only if Postges is enabled or we decide dims are needed for both
         # Currently referential integrity uses dims, so we might need to load valid dims into memory regardless.
         # But upserting to DB should be gated.
-        logger.info("Phase 1: Loading Dimensions (Comercios & Sucursales)")
+        logger.info("Phase 2: Loading Dimensions (Comercios & Sucursales)")
 
         all_comercios = []
         all_sucursales = []
@@ -88,7 +104,7 @@ def process_daily_data(
 
         validator = SEPAValidator()
 
-        if "postgres" in stages:
+        if any(s in stages for s in ["postgres", "iceberg", "bigquery"]):
             for idx, csv_paths in enumerate(all_csv_paths):
                 logger.info(
                     f"Dimensions Scan: Processing file {idx + 1}/{len(all_csv_paths)}"
@@ -171,7 +187,7 @@ def process_daily_data(
                 df_sucursales = pl.DataFrame(schema=sucursales_schema)
 
         else:
-            # If skipping postgres, initialize empty DFs
+            # If skipping everything that needs dimensions, initialize empty DFs
             df_comercios = pl.DataFrame(schema=comercio_schema)
             df_sucursales = pl.DataFrame(schema=sucursales_schema)
 
@@ -190,26 +206,18 @@ def process_daily_data(
             postgres_loader._upsert_comercios(df_comercios)
             postgres_loader._upsert_sucursales(df_sucursales)
 
+        if iceberg_loader:
+            iceberg_loader.load_comercios(df_comercios, target_date)
+            iceberg_loader.load_sucursales(df_sucursales, target_date)
+
+        if bigquery_loader:
+            bigquery_loader.load_comercios(df_comercios, target_date)
+            bigquery_loader.load_sucursales(df_sucursales, target_date)
+
         # Free memory
         del all_comercios
         del all_sucursales
         # We keep df_comercios and df_sucursales for referential integrity checks
-
-        # --- Phase 2: Prepare Partition ---
-        logger.info("Phase 2: Preparing Partitions")
-
-        if postgres_loader:
-            postgres_loader.setup(target_date)
-
-        if iceberg_loader:
-            # Ensure Iceberg idempotency (overwrite strategy)
-            iceberg_loader.setup(target_date)
-
-        if parquet_loader:
-            parquet_loader.setup(target_date)
-
-        if bigquery_loader:
-            bigquery_loader.setup(target_date)
 
         # --- Phase 3: Chunked Product & Price Loading ---
         logger.info("Phase 3: Loading Products and Prices (Chunked)")
@@ -254,6 +262,7 @@ def process_daily_data(
 
                     # Archive to Iceberg (Silver Layer)
                     if iceberg_loader:
+                        iceberg_loader.load_productos(df_producto, target_date)
                         iceberg_loader.load(df_producto, target_date)
 
                     # Archive to Parquet (Bronze Layer)
@@ -262,6 +271,7 @@ def process_daily_data(
 
                     # Export to BigQuery Data Lakehouse
                     if bigquery_loader:
+                        bigquery_loader.load_productos(df_producto, target_date)
                         bigquery_loader.load(df_producto, target_date)
 
                     total_prices_loaded += df_producto.height

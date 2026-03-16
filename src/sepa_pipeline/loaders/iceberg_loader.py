@@ -26,6 +26,8 @@ class IcebergLoader(BaseLoader):
                 "default", **self.config.iceberg_catalog_config
             )
             self._iceberg_table: Table | None = None
+            self._dim_tables: dict[str, Table] = {}
+            self._seen_productos: set[str] = set()
         except Exception as e:
             logger.warning(f"Failed to initialize Iceberg Catalog: {e}")
             self.catalog = None
@@ -59,6 +61,26 @@ class IcebergLoader(BaseLoader):
         except Exception as e:
             logger.error(f"[ICEBERG] Failed to cleanup partition: {e}")
             raise
+
+        # Cleanup dimension tables
+        for dim_table in ["dim_comercios", "dim_sucursales", "dim_productos"]:
+            self._cleanup_dimension_table(dim_table, fecha_vigencia)
+
+        # Clear seen products for the new load
+        self._seen_productos.clear()
+
+    def _cleanup_dimension_table(self, table_name: str, fecha_vigencia: date) -> None:
+        if not self.catalog:
+            return
+        identifier = f"sepa.{table_name}"
+        try:
+            table = self.catalog.load_table(identifier)
+            table.delete(delete_filter=EqualTo("fecha_vigencia", fecha_vigencia))
+            logger.info(f"[ICEBERG] Cleanup complete for {identifier}.")
+        except NoSuchTableError:
+            pass
+        except Exception as e:
+            logger.warning(f"[ICEBERG] Failed to cleanup {identifier}: {e}")
 
     def _ensure_iceberg_table(self, df: pl.DataFrame) -> None:
         """Ensure the Iceberg table exists, creating it if necessary."""
@@ -146,3 +168,94 @@ class IcebergLoader(BaseLoader):
             self.log_success(fecha_vigencia, len(df))
         else:
             logger.error("[ICEBERG] Failed to load/create Iceberg table, skipping append")
+
+    def _ensure_dimension_table(self, table_name: str, df: pl.DataFrame) -> Table | None:
+        if not self.catalog:
+            return None
+        
+        identifier = f"sepa.{table_name}"
+        if identifier in self._dim_tables:
+            return self._dim_tables[identifier]
+
+        try:
+            table = self.catalog.load_table(identifier)
+            self._dim_tables[identifier] = table
+            # Upgrade existing table to format version 2 if needed
+            if str(table.properties.get("format-version", "1")) == "1":
+                with table.transaction() as tx:
+                    tx.set_properties({"format-version": "2"})
+            return table
+        except NoSuchTableError:
+            logger.info(f"[ICEBERG] Creating dimension table {identifier}...")
+            arrow_table = df.to_arrow()
+            try:
+                self.catalog.create_namespace("sepa")
+            except NamespaceAlreadyExistsError:
+                pass
+
+            try:
+                table = self.catalog.create_table(identifier, schema=arrow_table.schema)
+                with table.update_spec() as update:
+                    update.add_field(
+                        "fecha_vigencia",
+                        DayTransform(),
+                        partition_field_name="fecha_vigencia_day",
+                    )
+                # Ensure format version 2
+                with table.transaction() as tx:
+                    tx.set_properties({"format-version": "2"})
+                self._dim_tables[identifier] = table
+                return table
+            except Exception as e:
+                logger.error(f"[ICEBERG] Failed to create dimension table {identifier}: {e}")
+                return None
+
+    def _prepare_dim_df(self, df: pl.DataFrame, fecha_vigencia: date) -> pl.DataFrame:
+        cols_to_add = []
+        if "fecha_vigencia" not in df.columns:
+            cols_to_add.append(pl.lit(fecha_vigencia).alias("fecha_vigencia"))
+        if cols_to_add:
+            df = df.with_columns(cols_to_add)
+        return df
+
+    def load_comercios(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
+        if not self.catalog or df.is_empty():
+            return
+        df = self._prepare_dim_df(df, fecha_vigencia)
+        table = self._ensure_dimension_table("dim_comercios", df)
+        if table:
+            logger.info(f"[ICEBERG] Appending {len(df)} rows to dim_comercios...")
+            table.append(df.to_arrow())
+
+    def load_sucursales(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
+        if not self.catalog or df.is_empty():
+            return
+        df = self._prepare_dim_df(df, fecha_vigencia)
+        table = self._ensure_dimension_table("dim_sucursales", df)
+        if table:
+            logger.info(f"[ICEBERG] Appending {len(df)} rows to dim_sucursales...")
+            table.append(df.to_arrow())
+
+    def load_productos(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
+        if not self.catalog or df.is_empty():
+            return
+        
+        # Ensure the chunk itself only has unique products before checking against history
+        df_unique = df.unique(subset=["id_producto"])
+        
+        # Filter out products we've already seen today
+        new_products = df_unique.filter(~pl.col("id_producto").is_in(list(self._seen_productos)))
+        
+        if new_products.is_empty():
+            logger.debug("[ICEBERG] No new products to append to dim_productos in this chunk.")
+            return
+
+        # Update seen products
+        new_ids = new_products["id_producto"].to_list()
+        self._seen_productos.update(new_ids)
+
+        new_products = self._prepare_dim_df(new_products, fecha_vigencia)
+        table = self._ensure_dimension_table("dim_productos", new_products)
+        if table:
+            logger.info(f"[ICEBERG] Appending {len(new_products)} rows to dim_productos...")
+            table.append(new_products.to_arrow())

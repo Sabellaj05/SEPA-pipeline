@@ -55,6 +55,18 @@ class BaseLoader(ABC):
         """
         pass
 
+    def load_comercios(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
+        """Load comercios dimension data. Default no-op."""
+        pass
+
+    def load_sucursales(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
+        """Load sucursales dimension data. Default no-op."""
+        pass
+
+    def load_productos(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
+        """Load productos dimension data. Default no-op."""
+        pass
+
     def log_start(self, fecha_vigencia: date):
         """Log the start of a loading process."""
         logger.info(f"[{self.stage_name}] Starting load for {fecha_vigencia}")
