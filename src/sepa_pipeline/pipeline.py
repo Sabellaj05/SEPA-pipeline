@@ -260,19 +260,35 @@ def process_daily_data(
                         # Load Prices
                         postgres_loader._bulk_load_precios(df_producto, target_date)
 
+                    # Isolate true Fact columns before sending to Lakehouse
+                    df_fact = df_producto.select([
+                        "id_comercio",
+                        "id_bandera",
+                        "id_sucursal",
+                        "id_producto",
+                        "productos_precio_lista",
+                        "productos_precio_referencia",
+                        "productos_cantidad_referencia",
+                        "productos_unidad_medida_referencia",
+                        "productos_precio_unitario_promo1",
+                        "productos_leyenda_promo1",
+                        "productos_precio_unitario_promo2",
+                        "productos_leyenda_promo2"
+                    ])
+
                     # Archive to Iceberg (Silver Layer)
                     if iceberg_loader:
                         iceberg_loader.load_productos(df_producto, target_date)
-                        iceberg_loader.load(df_producto, target_date)
+                        iceberg_loader.load(df_fact, target_date)
 
                     # Archive to Parquet (Bronze Layer)
                     if parquet_loader:
-                        parquet_loader.load(df_producto, target_date)
+                        parquet_loader.load(df_fact, target_date)
 
                     # Export to BigQuery Data Lakehouse
                     if bigquery_loader:
                         bigquery_loader.load_productos(df_producto, target_date)
-                        bigquery_loader.load(df_producto, target_date)
+                        bigquery_loader.load(df_fact, target_date)
 
                     total_prices_loaded += df_producto.height
 
