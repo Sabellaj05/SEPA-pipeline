@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from types import TracebackType
 from typing import Optional, Self
+from datetime import date
 
 import httpx
 from bs4 import BeautifulSoup
@@ -25,17 +26,19 @@ logger = get_logger(__name__)
 class SepaScraper:
     """Class to scrape SEPA precios."""
 
-    def __init__(self, url: str, data_dir: str):
+    def __init__(self, url: str, data_dir: str, target_date: str | date | None = None):
         """
         Initializes the Scraper.
 
         args:
             url: The base URL to scrape from.
             data_dir: The directory to save downloaded files.
+            target_date: Optional explicitly requested date (YYYY-MM-DD or date obj)
         """
         self.url = url
         self.data_dir = Path(data_dir)
-        self.fecha = Fecha()
+        self.target_date = target_date
+        self.fecha = Fecha(target_date)
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self) -> Self:
