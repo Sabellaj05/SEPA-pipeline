@@ -21,8 +21,22 @@ def mock_httpx_response():
     response.text = """
     <html>
         <body>
-            <a href="https://example.com/sepa_jueves.zip">Download jueves</a>
-            <a href="https://example.com/sepa_lunes.zip">Download lunes</a>
+            <div class="pkg-container">
+                <div class="package-info">
+                    <p>Actualizado: 2024-01-01</p>
+                </div>
+                <div class="pkg-actions">
+                    <a href="https://example.com/sepa_jueves.zip">DESCARGAR</a>
+                </div>
+            </div>
+            <div class="pkg-container">
+                <div class="package-info">
+                    <p>Actualizado: 2024-01-02</p>
+                </div>
+                <div class="pkg-actions">
+                    <a href="https://example.com/sepa_lunes.zip">DESCARGAR</a>
+                </div>
+            </div>
             <a href="https://example.com/other_file.txt">Other file</a>
         </body>
     </html>

@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from types import TracebackType
 from typing import Optional, Self
+from datetime import date
 
 import httpx
 from bs4 import BeautifulSoup
@@ -12,6 +13,9 @@ from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 from tqdm import tqdm
 
 from sepa_pipeline.config import SEPAConfig
+
+import zipfile
+import io
 
 from .utils.fecha import Fecha
 from .utils.logger import get_logger
@@ -22,17 +26,19 @@ logger = get_logger(__name__)
 class SepaScraper:
     """Class to scrape SEPA precios."""
 
-    def __init__(self, url: str, data_dir: str):
+    def __init__(self, url: str, data_dir: str, target_date: str | date | None = None):
         """
         Initializes the Scraper.
 
         args:
             url: The base URL to scrape from.
             data_dir: The directory to save downloaded files.
+            target_date: Optional explicitly requested date (YYYY-MM-DD or date obj)
         """
         self.url = url
         self.data_dir = Path(data_dir)
-        self.fecha = Fecha()
+        self.target_date = target_date
+        self.fecha = Fecha(target_date)
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self) -> Self:
@@ -230,6 +236,11 @@ class SepaScraper:
                 file_path.unlink(missing_ok=True)
                 return False
 
+            # Inherent Data Validation Inside the ZIP
+            if not self._validate_zip_date(file_path):
+                file_path.unlink(missing_ok=True)
+                return False
+
             logger.info("File downloaded successfully and size validated")
             return True
         except httpx.RequestError as exc:
@@ -244,9 +255,97 @@ class SepaScraper:
             return False
         except Exception as e:
             logger.error(f"Unexpected error downloading the file: {e}")
-            if file_path and file_path.exists():
+            if 'file_path' in locals() and file_path and file_path.exists():
                 file_path.unlink(missing_ok=True)
             return False
+
+    def _validate_zip_date(self, zip_path: Path) -> bool:
+        """
+        Extracts the ISO date from the 'comercio.csv' footer inside the downloaded ZIP.
+        Samples up to 20 nested zips to determine if the overall package is fresh
+        based on a majority vote.
+        """
+        logger.info("Performing intrinsic date validation inside downloaded Master ZIP...")
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as master_zf:
+                inner_zips = [f for f in master_zf.namelist() if f.endswith('.zip')]
+
+                if not inner_zips:
+                    logger.warning("No nested '.zip' files found inside Master ZIP to validate date.")
+                    return True  # Fail open if structure unexpected
+
+                # Sample up to 20 nested zips to avoid false negatives from single stores
+                # that haven't updated their data, while avoiding unzipping all 200MiB.
+                sample_size = min(20, len(inner_zips))
+                sampled_zips = inner_zips[:sample_size]
+                
+                valid_count = 0
+                stale_count = 0
+                unknown_count = 0
+                
+                logger.info(f"Sampling {sample_size} nested ZIPs for freshness consensus...")
+
+                target_date_str = self.fecha.hoy
+                from datetime import datetime, timedelta
+                target_d = datetime.strptime(target_date_str, "%Y-%m-%d").date()
+
+                for inner_zip_name in sampled_zips:
+                    # Open the inner ZIP in memory
+                    try:
+                        with master_zf.open(inner_zip_name, 'r') as inner_file:
+                            with zipfile.ZipFile(io.BytesIO(inner_file.read())) as inner_zf:
+                                comercio_files = [f for f in inner_zf.namelist() if f.endswith('comercio.csv')]
+                                if not comercio_files:
+                                    unknown_count += 1
+                                    continue
+                                    
+                                comercio_filename = comercio_files[0]
+                                date_found = False
+                                
+                                # Read comercio.csv block by block
+                                with inner_zf.open(comercio_filename, 'r') as f:
+                                    wrapper = io.TextIOWrapper(f, encoding='utf-8-sig', errors='replace')
+                                    for line in wrapper:
+                                        if "ltima actualizaci" in line.lower():
+                                            date_match = re.search(r"(\d{4}-\d{2}-\d{2})", line)
+                                            if date_match:
+                                                extracted_date_str = date_match.group(1)
+                                                extracted_d = datetime.strptime(extracted_date_str, "%Y-%m-%d").date()
+                                                
+                                                date_found = True
+                                                if extracted_d < (target_d - timedelta(days=1)):
+                                                    stale_count += 1
+                                                else:
+                                                    valid_count += 1
+                                                break # Stop reading this CSV once date is found
+                                                
+                                if not date_found:
+                                    unknown_count += 1
+                                    
+                    except Exception as e:
+                        logger.warning(f"Failed to parse nested ZIP {inner_zip_name}: {e}")
+                        unknown_count += 1
+
+                # Evaluate Consensus
+                logger.info(
+                    f"Consensus Results -> Valid: {valid_count}, Stale: {stale_count}, "
+                    f"Unknown: {unknown_count} (out of {sample_size} sampled)"
+                )
+                
+                # We only reject the entire package if we found more definitively stale files than valid ones
+                if stale_count > valid_count:
+                    logger.error(
+                        f"Intrinsic validation failed! Master package is predominately stale. "
+                        f"Rejecting {zip_path.name}."
+                    )
+                    return False
+                else:
+                    logger.info("Package passed majority vote validation.")
+                    return True
+
+        except Exception as e:
+            logger.error(f"Error during intrinsic ZIP validation: {e}")
+            return True  # Fail open on unexpected ZIP parsing errors
 
     async def hurtar_datos(self, min_file_size_mb: int = 150) -> bool:
         """

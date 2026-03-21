@@ -11,7 +11,10 @@ import polars as pl
 
 from sepa_pipeline.config import SEPAConfig
 from sepa_pipeline.extractor import SEPAExtractor
-from sepa_pipeline.loader import SEPALoader
+from sepa_pipeline.loaders.postgres_loader import PostgresLoader
+from sepa_pipeline.loaders.iceberg_loader import IcebergLoader
+from sepa_pipeline.loaders.parquet_loader import ParquetLoader
+from sepa_pipeline.loaders.bigquery_loader import BigQueryLoader
 from sepa_pipeline.utils.fecha import Fecha
 from sepa_pipeline.utils.logger import get_logger
 from sepa_pipeline.validator import SEPAValidator, get_schema_dict
@@ -28,10 +31,10 @@ def process_daily_data(
     Args:
         target_date: Date to process
         config: Configuration object
-        stages: List of stages to run ['postgres', 'iceberg']. If None, runs all.
+        stages: List of stages to run ['postgres', 'iceberg', 'parquet', 'bigquery']. If None, runs all.
     """
     if stages is None:
-        stages = ["postgres", "iceberg"]
+        stages = ["postgres", "iceberg", "parquet", "bigquery"]
 
     logger.info(f"Starting SEPA pipeline for {target_date} | Stages: {stages}")
 
@@ -61,33 +64,35 @@ def process_daily_data(
             raise
 
         # 2. Extract child ZIPs
-        # Note: extract_all_zips also extracts to subdirs inside/near raw_zip_dir usually.
-        # But wait, fetch_from_bronze created a temp dir. extract_all_zips extracts *into* that dir's subfolder usually?
-        # Let's check extractor logic. extract_all_zips extracts to 'extracted_csvs' INSIDE the source dir.
-        # So deleting raw_zip_dir (if it is the parent temp dir) should clean everything.
-        # BUT fetch_from_bronze returns `child_zips[0].parent`.
-        # If fetch_from_bronze returns `/tmp/sepa_bronze_DATE/master_extracted`, we need to delete `/tmp/sepa_bronze_DATE`.
-
-        # Looking at extractor.py:
-        # temp_dir = Path(f"/tmp/sepa_bronze_{target_date}")
-        # returns child_zips[0].parent which is inside temp_dir.
-
-        # We should capture the root temp dir for cleanup.
-        # Since fetch_from_bronze returns a subdir, we can just walk up.
-        # Or better: let's modify fetch_from_bronze to return the root cleanup path too?
-        # For now, let's just delete the directory we have, and its parents if they are temp?
-        # Actually, let's just make sure we delete what we can.
-
         all_csv_paths = extractor.extract_all_zips(raw_zip_dir)
 
-        # Initialize loader
-        loader = SEPALoader(config)
+        # Initialize loaders
+        postgres_loader = PostgresLoader(config) if "postgres" in stages else None
+        iceberg_loader = IcebergLoader(config) if "iceberg" in stages else None
+        parquet_loader = ParquetLoader(config) if "parquet" in stages else None
+        bigquery_loader = BigQueryLoader(config) if "bigquery" in stages else None
 
-        # --- Phase 1: Load Dimensions (Comercios & Sucursales) ---
+        # --- Phase 1: Prepare Partition (Idempotent Setup) ---
+        logger.info("Phase 1: Preparing Partitions")
+
+        if postgres_loader:
+            postgres_loader.setup(target_date)
+
+        if iceberg_loader:
+            # Ensure Iceberg idempotency (overwrite strategy)
+            iceberg_loader.setup(target_date)
+
+        if parquet_loader:
+            parquet_loader.setup(target_date)
+
+        if bigquery_loader:
+            bigquery_loader.setup(target_date)
+
+        # --- Phase 2: Load Dimensions (Comercios & Sucursales) ---
         # Only if Postges is enabled or we decide dims are needed for both
         # Currently referential integrity uses dims, so we might need to load valid dims into memory regardless.
         # But upserting to DB should be gated.
-        logger.info("Phase 1: Loading Dimensions (Comercios & Sucursales)")
+        logger.info("Phase 2: Loading Dimensions (Comercios & Sucursales)")
 
         all_comercios = []
         all_sucursales = []
@@ -99,7 +104,7 @@ def process_daily_data(
 
         validator = SEPAValidator()
 
-        if "postgres" in stages:
+        if any(s in stages for s in ["postgres", "iceberg", "bigquery"]):
             for idx, csv_paths in enumerate(all_csv_paths):
                 logger.info(
                     f"Dimensions Scan: Processing file {idx + 1}/{len(all_csv_paths)}"
@@ -182,7 +187,7 @@ def process_daily_data(
                 df_sucursales = pl.DataFrame(schema=sucursales_schema)
 
         else:
-            # If skipping postgres, initialize empty DFs
+            # If skipping everything that needs dimensions, initialize empty DFs
             df_comercios = pl.DataFrame(schema=comercio_schema)
             df_sucursales = pl.DataFrame(schema=sucursales_schema)
 
@@ -197,24 +202,22 @@ def process_daily_data(
         )
 
         # Load Dimensions
-        if "postgres" in stages:
-            loader.upsert_comercios(df_comercios)
-            loader.upsert_sucursales(df_sucursales)
+        if postgres_loader:
+            postgres_loader._upsert_comercios(df_comercios)
+            postgres_loader._upsert_sucursales(df_sucursales)
+
+        if iceberg_loader:
+            iceberg_loader.load_comercios(df_comercios, target_date)
+            iceberg_loader.load_sucursales(df_sucursales, target_date)
+
+        if bigquery_loader:
+            bigquery_loader.load_comercios(df_comercios, target_date)
+            bigquery_loader.load_sucursales(df_sucursales, target_date)
 
         # Free memory
         del all_comercios
         del all_sucursales
         # We keep df_comercios and df_sucursales for referential integrity checks
-
-        # --- Phase 2: Prepare Partition ---
-        logger.info("Phase 2: Preparing Partitions")
-
-        if "postgres" in stages:
-            loader.prepare_precios_partition(target_date)
-
-        if "iceberg" in stages:
-            # Ensure Iceberg idempotency (overwrite strategy)
-            loader.cleanup_iceberg_partition(target_date)
 
         # --- Phase 3: Chunked Product & Price Loading ---
         logger.info("Phase 3: Loading Products and Prices (Chunked)")
@@ -251,18 +254,41 @@ def process_daily_data(
 
                 if df_producto.height > 0:
                     # Upsert Products Master
-                    if "postgres" in stages:
-                        loader.upsert_productos_master(df_producto)
+                    if postgres_loader:
+                        postgres_loader._upsert_productos_master(df_producto)
 
                         # Load Prices
-                        loader.bulk_load_precios(df_producto, scraped_at, target_date)
+                        postgres_loader._bulk_load_precios(df_producto, target_date)
+
+                    # Isolate true Fact columns before sending to Lakehouse
+                    df_fact = df_producto.select([
+                        "id_comercio",
+                        "id_bandera",
+                        "id_sucursal",
+                        "id_producto",
+                        "productos_precio_lista",
+                        "productos_precio_referencia",
+                        "productos_cantidad_referencia",
+                        "productos_unidad_medida_referencia",
+                        "productos_precio_unitario_promo1",
+                        "productos_leyenda_promo1",
+                        "productos_precio_unitario_promo2",
+                        "productos_leyenda_promo2"
+                    ])
 
                     # Archive to Iceberg (Silver Layer)
-                    if "iceberg" in stages:
-                        loader.append_to_iceberg(df_producto, scraped_at, target_date)
+                    if iceberg_loader:
+                        iceberg_loader.load_productos(df_producto, target_date)
+                        iceberg_loader.load(df_fact, target_date)
 
                     # Archive to Parquet (Bronze Layer)
-                    loader.append_to_parquet(df_producto, target_date)
+                    if parquet_loader:
+                        parquet_loader.load(df_fact, target_date)
+
+                    # Export to BigQuery Data Lakehouse
+                    if bigquery_loader:
+                        bigquery_loader.load_productos(df_producto, target_date)
+                        bigquery_loader.load(df_fact, target_date)
 
                     total_prices_loaded += df_producto.height
 
@@ -276,15 +302,6 @@ def process_daily_data(
         if raw_zip_dir and raw_zip_dir.exists():
             logger.info(f"Cleaning up temporary directory: {raw_zip_dir}")
             try:
-                # raw_zip_dir is likely the parent containing extracted_csvs and child zips
-                # fetch_from_bronze returns child_zips[0].parent.
-                # If structure is /tmp/sepa_bronze_DATE/extracted/child_zips/...,
-                # we want to delete /tmp/sepa_bronze_DATE.
-                # Let's inspect raw_zip_dir structure.
-                # If fetch_from_bronze returns `temp_dir / "master_extracted"`, that's fine.
-                # But it creates `Path(f"/tmp/sepa_bronze_{target_date}")`
-                # To be safe, let's delete that top-level temp dir.
-
                 # Check if it looks like our temp dir
                 if "sepa_bronze_" in str(raw_zip_dir):
                     # Find the root of our temp dir
@@ -320,8 +337,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--stages",
         type=str,
-        help="Comma-separated stages to run: postgres,iceberg (default: all)",
-        default="postgres,iceberg",
+        help="Comma-separated stages to run: postgres,iceberg,parquet,bigquery (default: all)",
+        default="postgres,iceberg,parquet,bigquery",
     )
     return parser.parse_args()
 
@@ -333,8 +350,6 @@ if __name__ == "__main__":
 
     config = SEPAConfig()
 
-    # Determine target date from CLI or default
-    # But wait, we need to call parse_args() first.
     if len(sys.argv) > 1:
         args = parse_args()
         if args.date:
@@ -349,10 +364,9 @@ if __name__ == "__main__":
 
         stages = [s.strip().lower() for s in args.stages.split(",")]
     else:
-        # Default behavior if no args provided (backward compatible-ish)
-        # But we want to encourage CLI usage.
+        # Default behavior if no args provided
         target_date = Fecha().ahora.date()
-        stages = ["postgres", "iceberg"]
+        stages = ["postgres", "iceberg", "parquet", "bigquery"]
 
     logger.info(f"Arguments -> Date: {target_date}, Stages: {stages}")
 

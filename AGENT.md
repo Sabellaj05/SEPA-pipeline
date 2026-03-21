@@ -12,8 +12,9 @@ This document provides a detailed, technical overview of the SEPA Price Pipeline
 
 - **Language**: Python 3.12+
 - **Database**: PostgreSQL 16 (via Docker)
-- **Object Storage**: MinIO (S3-compatible)
+- **Object Storage**: MinIO (S3-compatible) & Google Cloud Storage (GCS)
 - **Table Format**: Apache Iceberg
+- **Cloud Query Engine**: Google Cloud BigLake (Serverless Analytics)
 - **Dependency Management**: `uv`
 - **Libraries**:
     - `polars`: High-performance data processing (the engine of the pipeline).
@@ -39,12 +40,18 @@ SEPA-pipeline/
 │       ├── __init__.py
 │       ├── config.py     # Centralized config (Env vars, Paths, Constants).
 │       ├── extractor.py  # ZIP extraction & S3 Fetching logic.
-│       ├── loader.py     # Loading logic for Postgres (COPY) & Iceberg (Append).
 │       ├── pipeline.py   # Main Orchestrator (CLI Entry Point).
 │       ├── scraper.py    # Web scraping & Raw S3 Upload.
 │       ├── validator.py  # Data validation & Schema enforcement.
+│       ├── loaders/
+│       │   ├── base.py
+│       │   ├── iceberg_loader.py
+│       │   ├── postgres_loader.py
+│       │   ├── parquet_loader.py
+│       │   └── bigquery_loader.py # Native BigLake ingestion.
 │       └── utils/
 │           ├── bootstrap_lakehouse.py  # MinIO Setup & Backfill Utility.
+│           ├── scan_bronze_dates.py    # Historical archive validation utility.
 │           └── logger.py
 ├── tests/
 ├── AGENT.md              # This file.
@@ -65,12 +72,16 @@ The project employs a dual-layer architecture to handle scale and distinct workl
     - **Partitioning**: The `precios` table is partitioned by `RANGE(fecha_vigencia)` (Date). This solves timezone drift issues faced with timestamp partitioning.
     - **Bulk Loading**: Uses `COPY` for speed. Referential integrity is enforced by the application (`validator.py`) before loading.
 
-### 4.2. Analytical Layer (MinIO + Iceberg)
+### 4.2. Analytical Layer (Iceberg Lakehouse)
 - **Role**: Cold Store / Data Lake. Historical analysis and massive aggregations.
 - **Structure**:
     - **Bronze**: Raw ZIP files stored in MinIO (`s3://sepa-lakehouse/bronze/raw`).
-    - **Silver**: Cleaned data stored as Apache Iceberg tables (`s3://sepa-lakehouse/silver/iceberg`).
-- **Catalog**: PostgreSQL is used as the Iceberg Catalog to track table metadata.
+    - **Silver**: Cleaned data stored as Apache Iceberg tables in GCS (`gs://sepa-lakehouse-silver-74dbadf7/warehouse/silver/iceberg`) and MinIO. Matches the Operational schema (Star Schema):
+        - **Fact**: `precios` (Partitioned by `Day(fecha_vigencia)`).
+        - **Dimensions**: `dim_comercios`, `dim_sucursales`, `dim_productos` (Appended via Daily Snapshots, partitioned by `Day(fecha_vigencia)`).
+- **Catalog Integration**: 
+    - **Local**: PostgreSQL is used as the Iceberg Catalog.
+    - **Cloud**: Google Cloud BigLake operates directly against PyIceberg's native BigQuery catalog (`bigquery_loader.py`) for serverless analytics.
 
 ## 5. Development Workflow
 
@@ -101,8 +112,8 @@ The project employs a dual-layer architecture to handle scale and distinct workl
 
 - **Polars for ETL**: Polars is used for all in-memory data transformation due to its speed and memory efficiency compared to Pandas.
 - **Application-Side Integrity**: To enable fast `COPY` inserts, foreign keys are **disabled on the fact table (`precios`)**. `validator.py` enforces referential integrity in-application before loading. Trade-off: Insert speed (+300%) vs database-enforced constraints.
-- **S3-Centric Flow**: The pipeline pulls data from the "Bronze" layer (MinIO) rather than the local file system (except in legacy/dev modes), decoupling scraping from processing.
 - **Strict Partitioning**: Database partitions are strictly aligned with the Business Date (`fecha_vigencia`) rather than ingestion time, ensuring determinism.
+- **Majority Vote Consensus Validation**: The scraping payload acts as the primary shield against stale data. It physically inspects the contents of a random sample (`N=20`) of nested store `.zip` files before fetching the final 180MB batch. If the *majority* of sampled files are older than 24h, the package is rejected. This prevents isolated inactive stores from blocking pipeline ingestion while guaranteeing overall partition freshness.
 - **Data Retention Policy**:
     - **Postgres Hot Store**: 60-90 days (configurable, supports recent price lookups for web frontend)
     - **Iceberg Cold Store**: Indefinite retention (historical analytics, annual price trends, inflation analysis)

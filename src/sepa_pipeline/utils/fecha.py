@@ -2,7 +2,7 @@
 Simple class to handle the date creation and localization
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 
 
 class Fecha:
@@ -17,10 +17,28 @@ class Fecha:
         6: "domingo",  # Sunday
     }
 
+    def __init__(self, target_date: str | date | datetime | None = None):
+        """Initializes Fecha, optionally overriding the 'now' context."""
+        self._target_date = target_date
+
     @property
     def _now(self) -> datetime:
         """Returns current time in date in AR timezone"""
         timezone_ar = timezone(timedelta(hours=-3))
+        if self._target_date:
+            if isinstance(self._target_date, str):
+                dt = datetime.strptime(self._target_date, "%Y-%m-%d")
+                return dt.replace(tzinfo=timezone_ar)
+            elif isinstance(self._target_date, date) and not isinstance(
+                self._target_date, datetime
+            ):
+                return datetime.combine(
+                    self._target_date, datetime.min.time()
+                ).replace(tzinfo=timezone_ar)
+            elif isinstance(self._target_date, datetime):
+                if self._target_date.tzinfo is None:
+                    return self._target_date.replace(tzinfo=timezone_ar)
+                return self._target_date.astimezone(timezone_ar)
         return datetime.now(timezone_ar)
 
     @property

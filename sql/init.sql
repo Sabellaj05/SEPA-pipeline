@@ -92,7 +92,7 @@ CREATE INDEX idx_productos_master_descripcion_gin ON productos_master
 -- ============================================================================
 -- FACT TABLE: precios (partitioned by date)
 -- Daily price observations - THE MAIN TABLE
--- Partitioned by scraped_at for efficient querying and maintenance
+-- Partitioned by fecha_vigencia for efficient querying and maintenance
 -- ~15M rows per day = ~450M rows per month
 -- ============================================================================
 CREATE TABLE precios (
@@ -229,7 +229,7 @@ ORDER BY p.id_comercio, p.id_bandera, p.id_sucursal, p.id_producto, p.scraped_at
 
 -- View for price comparison across branches
 CREATE OR REPLACE VIEW v_precio_comparacion AS
-SELECT 
+SELECT
     p.id_producto,
     pm.productos_descripcion,
     pm.productos_marca,

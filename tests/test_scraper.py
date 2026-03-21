@@ -70,6 +70,7 @@ class TestSepaScraper:
             # Mock Fecha to control the day of the week
             mock_fecha_instance = Mock()
             mock_fecha_instance.nombre_weekday = "jueves"
+            mock_fecha_instance.hoy = "2024-01-01"
             mock_fecha_class.return_value = mock_fecha_instance
 
             async with SepaScraper(
@@ -86,6 +87,7 @@ class TestSepaScraper:
             # Mock Fecha to control the day of the week to a non-matching day
             mock_fecha_instance = Mock()
             mock_fecha_instance.nombre_weekday = "lunes"
+            mock_fecha_instance.hoy = "2024-01-03" # does not match 2024-01-01 or 02
             mock_fecha_class.return_value = mock_fecha_instance
 
             async with SepaScraper(

@@ -1,28 +1,30 @@
 import os
 
 import boto3
+from botocore.exceptions import ClientError
 
 from sepa_pipeline.config import SEPAConfig
 from sepa_pipeline.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+config = SEPAConfig()
+s3_client = boto3.client(
+    "s3",
+    endpoint_url=config.minio_endpoint,
+    aws_access_key_id=config.minio_access_key,
+    aws_secret_access_key=config.minio_secret_key,
+    region_name="us-east-1",
+)
 
-def bootstrap_lakehouse(upload_dir: str | None = None) -> None:
+
+def bootstrap_lakehouse(local_dir: str | None = None) -> None:
     """
     Bootstraps the MinIO Lakehouse by creating the main bucket.
     Optionally uploads files from a directory to the Bronze layer with Hive-style partitioning.
     """
-    config = SEPAConfig()
 
     # Initialize S3 Client
-    s3_client = boto3.client(
-        "s3",
-        endpoint_url=config.minio_endpoint,
-        aws_access_key_id=config.minio_access_key,
-        aws_secret_access_key=config.minio_secret_key,
-        region_name="us-east-1",
-    )
 
     # Use consistent bucket name from config
     batch_bucket = config.minio_bucket or "sepa-lakehouse"
@@ -45,13 +47,13 @@ def bootstrap_lakehouse(upload_dir: str | None = None) -> None:
     for folder in folders:
         try:
             s3_client.put_object(Bucket=batch_bucket, Key=folder)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error creating folders: {folders}: {e}")
 
-    # Optional: Upload manual backups
-    if upload_dir and os.path.isdir(upload_dir):
-        logger.info(f"Scanning {upload_dir} for Manual Backups to upload...")
-        for filename in os.listdir(upload_dir):
+    # Optional: Upload raw zip files manual backups
+    if local_dir and os.path.isdir(local_dir):
+        logger.info(f"Scanning {local_dir} for Manual Backups to upload...")
+        for filename in os.listdir(local_dir):
             if filename.endswith(".zip") and "sepa_precios_" in filename:
                 # Expected format: sepa_precios_YYYY-MM-DD.zip
                 # Target path: bronze/raw/year=YYYY/month=MM/day=DD/filename.zip
@@ -70,7 +72,11 @@ def bootstrap_lakehouse(upload_dir: str | None = None) -> None:
                         f"Uploading {filename} -> s3://{batch_bucket}/{target_key}"
                     )
 
-                    file_path = os.path.join(upload_dir, filename)
+                    file_path = os.path.join(local_dir, filename)
+                    if check_exists_file(batch_bucket, target_key):
+                        logger.info(f"Skipping: {filename} already exists in s3")
+                        continue
+
                     s3_client.upload_file(file_path, batch_bucket, target_key)
 
                 except ValueError:
@@ -81,6 +87,19 @@ def bootstrap_lakehouse(upload_dir: str | None = None) -> None:
                     logger.error(f"Failed to upload {filename}: {e}")
 
     logger.info("Lakehouse bootstrap complete.")
+
+
+def check_exists_file(bucket, target_key) -> bool:
+    try:
+        # head object only retrieves metadata
+        s3_client.head_object(Bucket=bucket, Key=target_key)
+        return True
+    except ClientError as e:
+        # 404 file doesn't exist
+        if e.response["Error"]["Code"] == "404":
+            return False
+        # if you get 403, check permissions of 's3:ListBucket'
+        raise e
 
 
 if __name__ == "__main__":
