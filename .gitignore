@@ -156,3 +156,7 @@ data/
 tmp/
 sql/scratchpad.sql
 
+# dbt
+dbt/sepa_analytics/target/
+dbt/sepa_analytics/dbt_packages/
+dbt/sepa_analytics/logs/

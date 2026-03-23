@@ -128,10 +128,32 @@ The project employs a dual-layer architecture to handle scale and distinct workl
 | **Silver Iceberg** | 27 GB | Indefinite | Analytics Ready |
 | **Postgres Hot** | 330 GB | 60-90 Days | Web App Queries (Auto-truncated) |
 
-## 8. Next Steps: Phase 4 - Orchestration
+## 8. Current Focus: Phase 4 - Analytics Layer (SPC-4)
 
-With the core ETL pipeline hardened (Phase SPC-3 ~95% complete), the focus shifts to automation:
-- **Orchestration Tool**: Implement Airflow to manage daily schedule, retry logic, and monitoring.
-- **Loader Decoupling**: Split Postgres and Iceberg loaders into separate modules (currently flag-based in `loader.py`).
-- **Schema Evolution**: Define policies for handling new columns in CSVs (see `OPERATIONS.md`).
-- **Retention Automation**: Schedule `drop_old_precios_partitions()` task in Airflow.
+With the core ETL pipeline complete (SPC-3 Done), the focus is building a **Gold layer** using **dbt**.
+
+- **Linear Project**: `Analytics Layer SEPA-4` (issues SEP-257 through SEP-262)
+- **Adapter**: `dbt-bigquery` (primary), `dbt-duckdb` (secondary/local)
+- **Source**: Silver Iceberg tables in BigQuery (`sepa-lakehouse42.silver.*`)
+- **Target**: Separate `gold` BigQuery dataset (`sepa-lakehouse42.gold`)
+- **Scope**: SEPA source only (GS1/BCRA deferred)
+- **Python**: `>=3.12,<3.14` (dbt-core does not support Python 3.14 yet due to pydantic.v1 incompatibility)
+
+### dbt Setup (SEP-257 -- Done)
+
+- **Project**: `dbt/sepa_analytics/`
+- **Profile**: `dbt/profiles.yml` (in-repo, use `--profiles-dir`)
+- **Auth**: Google Application Default Credentials (`gcloud auth application-default login`)
+- **Run dbt commands from repo root**:
+  ```bash
+  uv run dbt debug --project-dir dbt/sepa_analytics --profiles-dir dbt
+  uv run dbt run --project-dir dbt/sepa_analytics --profiles-dir dbt
+  ```
+
+### Issue Sequence
+1. **SEP-257**: Setup dbt project + BigQuery adapter (Done)
+2. **SEP-258**: Setup Gold BigQuery dataset
+3. **SEP-259**: Define Silver sources + staging models
+4. **SEP-260**: Create Gold mart models (2 models: `daily_price_summary`, `store_coverage`)
+5. **SEP-261**: End-to-end validation + documentation
+6. **SEP-262**: Add DuckDB local target
