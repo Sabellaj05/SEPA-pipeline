@@ -1,0 +1,23 @@
+
+name: 'sepa_analytics'
+version: '1.0.0'
+
+profile: 'sepa_analytics'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  sepa_analytics:
+    staging:
+      +materialized: view
+    gold:
+      +materialized: table

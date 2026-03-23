@@ -1,0 +1,11 @@
+sepa_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: sepa-lakehouse42
+      dataset: gold
+      threads: 4
+      timeout_seconds: 300
+      location: US
