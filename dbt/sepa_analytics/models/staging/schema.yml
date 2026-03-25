@@ -1,0 +1,48 @@
+version: 2
+
+models:
+  - name: stg_dim_comercios
+    description: "Staging dimension for merchant chains/flags."
+    columns:
+      - name: id_comercio
+        description: "Primary key"
+        tests:
+          - not_null
+
+  - name: stg_dim_productos
+    description: "Staging dimension for unique products."
+    columns:
+      - name: id_producto
+        description: "Primary key"
+        tests:
+          - not_null
+      - name: ean
+        description: "Product EAN identifier"
+
+  - name: stg_dim_sucursales
+    description: "Staging dimension for physical branches."
+    columns:
+      - name: id_sucursal
+        description: "Primary key"
+        tests:
+          - not_null
+
+  - name: stg_precios
+    description: "Staging fact table for daily prices."
+    columns:
+      - name: fecha_vigencia
+        description: "Partitioning exact date"
+        tests:
+          - not_null
+      - name: id_producto
+        description: "Foreign key linking product dimension"
+        tests:
+          - not_null
+      - name: id_sucursal
+        description: "Foreign key linking branch dimension"
+        tests:
+          - not_null
+      - name: id_comercio
+        description: "Foreign key linking merchant dimension"
+        tests:
+          - not_null
