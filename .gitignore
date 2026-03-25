@@ -155,8 +155,11 @@ data/
 .pyiceberg.yaml
 tmp/
 sql/scratchpad.sql
+.secret/
 
 # dbt
 dbt/sepa_analytics/target/
 dbt/sepa_analytics/dbt_packages/
 dbt/sepa_analytics/logs/
+dbt/profiles.yml
+dbt/.user.yml
