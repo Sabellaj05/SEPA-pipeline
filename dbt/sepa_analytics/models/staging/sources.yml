@@ -1,0 +1,39 @@
+version: 2
+
+sources:
+  - name: sepa_silver
+    description: "The Apache Iceberg Silver Lakehouse layer exposed natively via BigLake"
+    database: sepa-lakehouse42
+    schema: silver
+    tables:
+      - name: dim_comercios
+        description: "Dimension table: Merchant chains and flags (e.g., Coto, Carrefour)"
+      - name: dim_productos
+        description: "Dimension table: Unique products and their EAN/descriptions"
+      - name: dim_sucursales
+        description: "Dimension table: Physical store branches with geolocations"
+      - name: precios
+        description: "Fact table: Daily price snapshots partitioned by fecha_vigencia"
+        columns:
+          - name: fecha_vigencia
+            description: "The effective date of the scraped price"
+          - name: id_producto
+            description: "Foreign key to dim_productos"
+          - name: id_sucursal
+            description: "Foreign key to dim_sucursales"
+          - name: id_comercio
+            description: "Foreign key to dim_comercios"
+          - name: id_bandera
+            description: "Brand ID within the commerce chain"
+          - name: productos_precio_lista
+            description: "The listed price of the product"
+          - name: productos_precio_unitario_promo1
+            description: "First promotional unit price if available"
+          - name: productos_leyenda_promo1
+            description: "First promotional text (e.g., 2x1)"
+          - name: productos_precio_unitario_promo2
+            description: "Second promotional unit price if available"
+          - name: productos_leyenda_promo2
+            description: "Second promotional text"
+          - name: scraped_at
+            description: "Exact timestamp the scraper collected this item"
