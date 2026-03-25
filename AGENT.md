@@ -92,6 +92,7 @@ The project employs a dual-layer architecture to handle scale and distinct workl
 2.  **Initialize/Reset Lakehouse** (First time or after reset):
     ```bash
     uv run python -m sepa_pipeline.utils.bootstrap_lakehouse
+    uv run python -m sepa_pipeline.utils.setup_bigquery
     ```
 3.  **Run Pipeline**:
     The pipeline is CLI-driven (`pipeline.py`).
@@ -143,7 +144,7 @@ With the core ETL pipeline complete (SPC-3 Done), the focus is building a **Gold
 
 - **Project**: `dbt/sepa_analytics/`
 - **Profile**: `dbt/profiles.yml` (in-repo, use `--profiles-dir`)
-- **Auth**: Google Application Default Credentials (`gcloud auth application-default login`)
+- **Auth**: Service Account (`keyfile` via `GOOGLE_APPLICATION_CREDENTIALS` env variable or direct path in `profiles.yml`)
 - **Run dbt commands from repo root**:
   ```bash
   uv run dbt debug --project-dir dbt/sepa_analytics --profiles-dir dbt

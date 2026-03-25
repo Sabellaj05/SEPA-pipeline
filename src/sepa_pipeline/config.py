@@ -149,7 +149,11 @@ class SEPAConfig:
         # GCP configurations for Biglake (optional for non-GCP runs, but required for BigQuery Loader)
         self.gcp_project: str | None = os.getenv("GCP_PROJECT", "sepa-lakehouse42")
         self.gcp_dataset: str | None = os.getenv("GCP_DATASET", "silver")
-        self.gcp_bucket: str | None = os.getenv("GCP_BUCKET", "sepa-lakehouse-silver-74dbadf7")
+        self.gcp_bucket: str | None = os.getenv(
+            "GCP_BUCKET", "sepa-lakehouse-silver-74dbadf7"
+        )
+        self.gcp_dataset_gold: str | None = os.getenv("GCP_DATASET_GOLD", "gold")
+        self.gcp_location: str | None = os.getenv("GCP_LOCATION", "US")
 
         missing = [key for key, value in required.items() if not value]
         if missing:

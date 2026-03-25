@@ -161,3 +161,4 @@ sql/scratchpad.sql
 dbt/sepa_analytics/target/
 dbt/sepa_analytics/dbt_packages/
 dbt/sepa_analytics/logs/
+dbt/profiles.yml
