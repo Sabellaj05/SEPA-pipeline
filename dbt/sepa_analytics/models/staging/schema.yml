@@ -2,47 +2,132 @@ version: 2
 
 models:
   - name: stg_dim_comercios
-    description: "Staging dimension for merchant chains/flags."
+    description: >
+      Staging dimension for merchant chains and banners (e.g., Coto, Carrefour, Dia).
+      Sourced from silver.dim_comercios (BigLake Iceberg). Append-only daily snapshot
+      partitioned by fecha_vigencia -- the effective primary key is [id_comercio, fecha_vigencia].
+      ID columns are cast from INT64 (Silver) to STRING to satisfy the staging type contract.
     columns:
       - name: id_comercio
-        description: "Primary key"
+        description: "Merchant chain identifier. Cast from INT64 to STRING. Primary key (composite with fecha_vigencia in Silver)."
         tests:
           - not_null
+      - name: id_bandera
+        description: "Banner/flag identifier within the chain. Cast from INT64 to STRING."
+      - name: cuit
+        description: "Argentine tax identifier (CUIT) for the legal entity."
+      - name: razon_social
+        description: "Legal business name of the merchant."
+      - name: bandera_nombre
+        description: "Commercial banner name (e.g., 'Coto', 'Jumbo')."
+      - name: bandera_url
+        description: "URL of the official website for the banner."
+      - name: version_sepa
+        description: "SEPA schema version used by this merchant's data submission."
+      - name: ultima_actualizacion
+        description: "Last update timestamp reported by the merchant in their submission."
 
   - name: stg_dim_productos
-    description: "Staging dimension for unique products."
+    description: >
+      Staging dimension for unique products with EAN codes and descriptions.
+      Sourced from silver.dim_productos (BigLake Iceberg). Append-only daily snapshot --
+      effective primary key is [id_producto, fecha_vigencia]. 100% of rows have
+      productos_descripcion populated. ~7.8% have NULL marca -- this is an upstream SEPA
+      source issue where some merchants do not report brand. ID columns cast INT64 -> STRING.
     columns:
       - name: id_producto
-        description: "Primary key"
-        tests:
-          - not_null
-      - name: ean
-        description: "Product EAN identifier"
-
-  - name: stg_dim_sucursales
-    description: "Staging dimension for physical branches."
-    columns:
-      - name: id_sucursal
-        description: "Primary key"
-        tests:
-          - not_null
-
-  - name: stg_precios
-    description: "Staging fact table for daily prices."
-    columns:
-      - name: fecha_vigencia
-        description: "Partitioning exact date"
-        tests:
-          - not_null
-      - name: id_producto
-        description: "Foreign key linking product dimension"
-        tests:
-          - not_null
-      - name: id_sucursal
-        description: "Foreign key linking branch dimension"
+        description: "Product identifier (typically EAN). Cast from INT64 to STRING. Primary key (composite with fecha_vigencia in Silver)."
         tests:
           - not_null
       - name: id_comercio
-        description: "Foreign key linking merchant dimension"
+        description: "Merchant chain that reported this product. Cast from INT64 to STRING."
+      - name: id_bandera
+        description: "Banner within the chain that reported this product. Cast from INT64 to STRING."
+      - name: id_sucursal
+        description: "Branch that reported this product. Cast from INT64 to STRING."
+      - name: ean
+        description: "EAN barcode of the product. May differ from id_producto for weight-variable items."
+      - name: descripcion
+        description: "Human-readable product name (e.g., 'Leche entera La Serenisima 1L'). 100% populated in Silver."
+      - name: marca
+        description: "Product brand (e.g., 'La Serenisima'). ~7.8% NULL in Silver -- upstream SEPA source omits brand for some products."
+      - name: cantidad_presentacion
+        description: "Numeric quantity in the standard presentation unit."
+      - name: unidad_medida_presentacion
+        description: "Unit of measure for the presentation (e.g., 'Kg', 'L', 'Un')."
+      - name: precio_referencia
+        description: "Reference price for unit comparison purposes."
+      - name: cantidad_referencia
+        description: "Reference quantity for unit price calculation."
+      - name: unidad_medida_referencia
+        description: "Unit of measure for the reference price (e.g., '100g', '1L')."
+      - name: leyenda_promo1
+        description: "Text description of the first active promotion if any (e.g., '2x1')."
+      - name: leyenda_promo2
+        description: "Text description of the second active promotion if any."
+
+  - name: stg_dim_sucursales
+    description: >
+      Staging dimension for physical store branches with geolocation and contact data.
+      Sourced from silver.dim_sucursales (BigLake Iceberg). Append-only daily snapshot.
+      The provincia column is critical for mart_store_coverage aggregations.
+      ID columns cast INT64 -> STRING to match the staging type contract.
+    columns:
+      - name: id_sucursal
+        description: "Branch identifier. Cast from INT64 to STRING. Primary key (composite with fecha_vigencia in Silver)."
         tests:
           - not_null
+      - name: id_comercio
+        description: "Parent merchant chain. Cast from INT64 to STRING. Join key to stg_dim_comercios."
+      - name: id_bandera
+        description: "Parent banner. Cast from INT64 to STRING."
+      - name: nombre
+        description: "Store branch name or number as reported by the merchant."
+      - name: tipo
+        description: "Store format type (e.g., 'Hipermercado', 'Supermercado', 'Minorista')."
+      - name: localidad
+        description: "City or locality where the branch is located."
+      - name: provincia
+        description: "Argentine province code (e.g., 'AR-B' for Buenos Aires). Used as the grouping key in mart_store_coverage. NULL for some branches in the source."
+      - name: codigo_postal
+        description: "Argentine postal code."
+      - name: latitud
+        description: "Latitude coordinate of the branch. Cast from string to FLOAT64."
+      - name: longitud
+        description: "Longitude coordinate of the branch. Cast from string to FLOAT64."
+
+  - name: stg_precios
+    description: >
+      Staging fact table for daily price snapshots. Sourced from silver.precios (BigLake Iceberg),
+      partitioned by fecha_vigencia. This is a NARROW FACT -- product attributes
+      (descripcion, marca) are intentionally excluded from the Silver fact by pipeline.py.
+      Any mart needing product names must JOIN stg_dim_productos, not read from this model.
+      All ID columns cast from INT64 to STRING. Filter WHERE precio_lista > 0 recommended
+      in marts; sentinel prices (0.01-0.10) exist in the upstream SEPA source.
+    columns:
+      - name: fecha_vigencia
+        description: "Business date the price is valid. Partition key. Always use this column in WHERE clauses to trigger partition pruning."
+        tests:
+          - not_null
+      - name: id_producto
+        description: "Product identifier. Cast from INT64 to STRING. Foreign key to stg_dim_productos.id_producto."
+        tests:
+          - not_null
+      - name: id_sucursal
+        description: "Branch identifier. Cast from INT64 to STRING. Foreign key to stg_dim_sucursales.id_sucursal."
+        tests:
+          - not_null
+      - name: id_comercio
+        description: "Merchant chain identifier. Cast from INT64 to STRING. Foreign key to stg_dim_comercios.id_comercio."
+        tests:
+          - not_null
+      - name: id_bandera
+        description: "Banner identifier within the chain. Cast from INT64 to STRING."
+      - name: precio_lista
+        description: "Listed retail price. Sentinel values (0.01-0.10) exist in upstream source. Apply WHERE precio_lista > 0 or >= 1.0 in marts."
+      - name: precio_unitario_promo1
+        description: "Promotional unit price for the first active offer. NULL when no promotion is active (~90% of rows)."
+      - name: precio_unitario_promo2
+        description: "Promotional unit price for the second active offer. NULL when no promotion is active."
+      - name: scraped_at
+        description: "Exact UTC timestamp when the scraper collected this record from the SEPA government server."
