@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: mart_daily_price_summary
+    description: "Daily Gold aggregation of prices strictly to observe cost fluctuations over time per product."
+    columns:
+      - name: fecha_vigencia
+        tests:
+          - not_null
+      - name: id_producto
+        tests:
+          - not_null
+      - name: precio_promedio
+        tests:
+          - not_null
+      - name: num_observaciones
+        tests:
+          - not_null
+
+  - name: mart_store_coverage
+    description: "Daily tracking metrics identifying active merchant chains, branches, and tracked SKUs per province."
+    columns:
+      - name: fecha_vigencia
+        tests:
+          - not_null
+      - name: cadenas_activas
+        tests:
+          - not_null
+      - name: sucursales_activas
+        tests:
+          - not_null

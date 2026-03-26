@@ -19,5 +19,6 @@ models:
   sepa_analytics:
     staging:
       +materialized: view
-    gold:
+    marts:
       +materialized: table
+

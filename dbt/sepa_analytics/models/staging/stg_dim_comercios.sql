@@ -5,8 +5,8 @@ with source as (
 renamed as (
     select
         -- ids
-        id_comercio,
-        id_bandera,
+        cast(id_comercio as string) as id_comercio,
+        cast(id_bandera as string) as id_bandera,
         
         -- dimensions
         comercio_cuit as cuit,
