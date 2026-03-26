@@ -5,9 +5,9 @@ with source as (
 renamed as (
     select
         -- ids
-        id_sucursal,
-        id_comercio,
-        id_bandera,
+        cast(id_sucursal as string) as id_sucursal,
+        cast(id_comercio as string) as id_comercio,
+        cast(id_bandera as string) as id_bandera,
         
         -- details
         sucursales_nombre as nombre,

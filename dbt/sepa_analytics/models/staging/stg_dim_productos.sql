@@ -5,10 +5,10 @@ with source as (
 renamed as (
     select
         -- ids
-        id_producto,
-        id_comercio,
-        id_bandera,
-        id_sucursal,
+        cast(id_producto as string) as id_producto,
+        cast(id_comercio as string) as id_comercio,
+        cast(id_bandera as string) as id_bandera,
+        cast(id_sucursal as string) as id_sucursal,
 
         -- properties
         productos_ean as ean,
