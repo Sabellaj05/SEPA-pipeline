@@ -152,9 +152,17 @@ With the core ETL pipeline complete (SPC-3 Done), the focus is building a **Gold
   ```
 
 ### Issue Sequence
-1. **SEP-257**: Setup dbt project + BigQuery adapter (Done)
-2. **SEP-258**: Setup Gold BigQuery dataset
-3. **SEP-259**: Define Silver sources + staging models
-4. **SEP-260**: Create Gold mart models (2 models: `daily_price_summary`, `store_coverage`)
-5. **SEP-261**: End-to-end validation + documentation
-6. **SEP-262**: Add DuckDB local target
+1. **SEP-257**: Setup dbt project + BigQuery adapter -- **Done**
+2. **SEP-258**: Setup Gold BigQuery dataset -- **Done**
+3. **SEP-259**: Define Silver sources + staging models -- **Done**
+4. **SEP-260**: Create Gold mart models (`mart_daily_price_summary`, `mart_store_coverage`) -- **Done**
+5. **SEP-261**: End-to-end validation + documentation -- **Next**
+6. **SEP-262**: Add DuckDB local target -- Backlog
+
+### Key Architectural Notes for Gold Layer
+- The Silver `precios` fact is a **narrow fact** -- `productos_descripcion` and `productos_marca` are NULL on it by design. Marts must JOIN `stg_dim_productos` for product attributes, not read from `stg_precios`.
+- All ID columns in staging models must be cast to `STRING` to match `stg_precios`. This is a hard requirement -- the staging layer owns the type contract for its columns.
+- Staging views are currently deployed to `sepa-lakehouse42.gold` (same dataset as marts). Schema separation will be cleaned up in SEP-261.
+- Editing staging `.sql` files on disk does NOT update the deployed view in BigQuery. Run `dbt run --select staging` to redeploy.
+- See `DOCS.md` Section 6 for the full Analytics Layer technical reference.
+
