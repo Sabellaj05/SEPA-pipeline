@@ -2,30 +2,74 @@ version: 2
 
 models:
   - name: mart_daily_price_summary
-    description: "Daily Gold aggregation of prices strictly to observe cost fluctuations over time per product."
+    description: >
+      Gold incremental table aggregating price metrics per product per day.
+      On first run, backfills all Silver history. Subsequent daily runs append only
+      new dates (is_incremental guard on fecha_vigencia). Partitioned by fecha_vigencia.
+      JOINs stg_dim_productos for descripcion and marca -- these columns are NULL on the
+      Silver precios fact (narrow fact by design) and must come from the dimension.
+      Filter WHERE precio_lista > 0 applied; sentinel values (0.01-0.10) may still appear
+      from upstream SEPA source -- see SEP data quality notes in DOCS.md Section 6.4.
     columns:
       - name: fecha_vigencia
+        description: "Business date of the price snapshot. Partition key."
         tests:
           - not_null
       - name: id_producto
+        description: "Product identifier (STRING). Composite primary key with fecha_vigencia."
+        tests:
+          - not_null
+      - name: descripcion
+        description: >
+          Product name sourced from stg_dim_productos via JOIN. 99.8% populated.
+          ~0.2% NULL for orphaned fact rows with no matching dimension entry.
+      - name: marca
+        description: >
+          Product brand sourced from stg_dim_productos via JOIN. ~7.8% NULL.
+          Confirmed upstream issue: these products have NULL marca in silver.dim_productos.
+          Not a pipeline defect.
+      - name: num_observaciones
+        description: "Count of price records (store-level observations) for this product on this date."
         tests:
           - not_null
       - name: precio_promedio
+        description: "Average precio_lista across all stores reporting this product on this date."
         tests:
           - not_null
-      - name: num_observaciones
-        tests:
-          - not_null
+      - name: precio_minimo
+        description: "Minimum precio_lista observed for this product on this date (cheapest store)."
+      - name: precio_maximo
+        description: "Maximum precio_lista observed for this product on this date (most expensive store)."
+      - name: mejor_precio_promo
+        description: >
+          Lowest active promotional price across all stores. NULL when no promotion exists --
+          the NULL is intentional and carries meaning (product is not on promotion today).
 
   - name: mart_store_coverage
-    description: "Daily tracking metrics identifying active merchant chains, branches, and tracked SKUs per province."
+    description: >
+      Gold incremental table tracking geographic and commercial coverage per province per day.
+      Answers: how many stores, products, and brands are actively reporting prices per province?
+      On first run, backfills all Silver history. Subsequent daily runs append only new dates.
+      Partitioned by fecha_vigencia. JOINs stg_dim_sucursales for provincia.
+      NULL provincia rows exist where branches did not report a province in the SEPA source.
     columns:
       - name: fecha_vigencia
+        description: "Business date of the coverage snapshot. Partition key."
+        tests:
+          - not_null
+      - name: provincia
+        description: >
+          Argentine province code (e.g., 'AR-B' for Buenos Aires Province, 'AR-C' for CABA).
+          NULL for branches that did not report a province in the SEPA source.
+      - name: sucursales_activas
+        description: "Count of distinct store branches reporting at least one price in this province on this date."
         tests:
           - not_null
       - name: cadenas_activas
+        description: "Count of distinct merchant chains (e.g., Coto, Carrefour) active in this province on this date."
         tests:
           - not_null
-      - name: sucursales_activas
-        tests:
-          - not_null
+      - name: productos_reportados
+        description: "Count of distinct products (by id_producto) with at least one price in this province on this date."
+      - name: total_precios
+        description: "Total count of individual price records in this province on this date."
