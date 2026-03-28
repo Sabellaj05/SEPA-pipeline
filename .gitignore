@@ -163,3 +163,6 @@ dbt/sepa_analytics/dbt_packages/
 dbt/sepa_analytics/logs/
 dbt/profiles.yml
 dbt/.user.yml
+
+# duckdb
+**/*.duckdb
