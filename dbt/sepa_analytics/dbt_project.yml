@@ -21,4 +21,6 @@ models:
       +materialized: view
     marts:
       +materialized: table
+    gold:
+      +materialized: incremental
 
