@@ -119,6 +119,7 @@ class SEPAConfig:
             "MINIO_SECRET_KEY", os.getenv("MINIO_PASSWORD")
         )
         self.minio_bucket: str | None = os.getenv("MINIO_BUCKET")
+        self.minio_region: str | None = os.getenv("MINIO_REGION")
 
         # Pipeline config
         self.retention_days_postgres: int = int(
@@ -191,7 +192,7 @@ class SEPAConfig:
             "s3.endpoint": endpoint,
             "s3.access-key-id": self.minio_access_key,
             "s3.secret-access-key": self.minio_secret_key,
-            "s3.region": "us-east-1",
+            "s3.region": self.minio_region,
             # PyIceberg/PyArrow should handle scheme from endpoint, but path-style is usually needed for MinIO
             # "s3.path-style-access": "true", # PyArrow might default correctly with custom endpoint, but let's try WITHOUT explicit first if PyArrow script worked without it.
             # actually, PyArrow script didn't set it. let's comment it out to match.

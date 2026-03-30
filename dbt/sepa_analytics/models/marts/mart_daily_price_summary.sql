@@ -3,18 +3,23 @@
     partition_by={
       "field": "fecha_vigencia",
       "data_type": "date"
-    },
-    cluster_by=['id_producto'],
-    unique_key=['id_producto', 'fecha_vigencia']
+    } if target.type == 'bigquery' else none,
+    cluster_by=['id_producto'] if target.type == 'bigquery' else none,
+    unique_key=['id_producto', 'fecha_vigencia'],
+    incremental_strategy='delete+insert' if target.type == 'duckdb' else none
 ) }}
 
 SELECT
     p.fecha_vigencia,
     p.id_producto,
-    -- ANY_VALUE: semantically correct -- one id_producto maps to one descripcion/marca.
-    -- Faster than MAX (no string comparison) and communicates intent clearly.
-    ANY_VALUE(d.descripcion)           AS descripcion,
-    ANY_VALUE(d.marca)                 AS marca,
+    -- Cross-adapter aggregation: ANY_VALUE (BQ) vs MIN (DuckDB)
+    {% if target.type == 'bigquery' %}
+        ANY_VALUE(d.descripcion)           AS descripcion,
+        ANY_VALUE(d.marca)                 AS marca,
+    {% else %}
+        MIN(d.descripcion)                 AS descripcion,
+        MIN(d.marca)                       AS marca,
+    {% endif %}
     COUNT(*)                           AS num_observaciones,
     AVG(p.precio_lista)                AS precio_promedio,
     MIN(p.precio_lista)                AS precio_minimo,
@@ -27,9 +32,15 @@ LEFT JOIN {{ ref('stg_dim_productos') }} d
 WHERE p.precio_lista > 0
 {% if is_incremental() %}
   -- 2-day lookback window handles late-arriving data from delayed ingestion runs
-  AND p.fecha_vigencia >= DATE_SUB(
-      (SELECT MAX(fecha_vigencia) FROM {{ this }}),
-      INTERVAL 2 DAY
-  )
+  {% if target.type == 'bigquery' %}
+    AND p.fecha_vigencia >= DATE_SUB(
+        (SELECT MAX(fecha_vigencia) FROM {{ this }}),
+        INTERVAL 2 DAY
+    )
+  {% else %}
+    AND p.fecha_vigencia >= (
+        SELECT MAX(fecha_vigencia) - INTERVAL 2 DAY FROM {{ this }}
+    )
+  {% endif %}
 {% endif %}
 GROUP BY 1, 2
