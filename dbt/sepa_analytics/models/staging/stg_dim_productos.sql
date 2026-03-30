@@ -1,5 +1,19 @@
 with source as (
-    select * from {{ source('sepa_silver', 'dim_productos') }}
+    select *
+    from {{ iceberg_source('dim_productos') }}
+    {% if target.type == 'duckdb' and var('dev_date_filter', false) %}
+        WHERE fecha_vigencia_day >= CURRENT_DATE - INTERVAL '{{ var("dev_days_back", 5) }}' DAY
+    {% endif %}
+),
+
+deduplicated as (
+    select *
+    from source
+    {% if target.type == 'duckdb' %}
+        qualify row_number() over (partition by id_producto order by fecha_vigencia_day desc) = 1
+    {% else %}
+        qualify row_number() over (partition by id_producto order by fecha_vigencia desc) = 1
+    {% endif %}
 ),
 
 renamed as (
@@ -27,7 +41,7 @@ renamed as (
         -- promo descriptions
         productos_leyenda_promo1 as leyenda_promo1,
         productos_leyenda_promo2 as leyenda_promo2
-    from source
+    from deduplicated
 )
 
 select * from renamed
