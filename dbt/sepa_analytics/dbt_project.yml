@@ -15,10 +15,17 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
+vars:
+  # Limits the initial full scan on BigQuery. Override with:
+  # --vars '{"start_date": "2024-01-01"}' to go back further.
+  start_date: '2025-01-01'
+
 models:
   sepa_analytics:
     staging:
       +materialized: view
+    intermediate:
+      +materialized: table
     marts:
       +materialized: table
     gold:

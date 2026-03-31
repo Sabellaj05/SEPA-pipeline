@@ -5,6 +5,8 @@ with source as (
         {# Filter directly on the Hive partition column BEFORE rename.
            This enables DuckDB to prune parquet files at read time. #}
         WHERE fecha_vigencia_day >= CURRENT_DATE - INTERVAL '{{ var("dev_days_back", 5) }}' DAY
+    {% elif target.type != 'duckdb' %}
+        WHERE fecha_vigencia >= '{{ var("start_date") }}'
     {% endif %}
 ),
 

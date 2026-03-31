@@ -171,32 +171,23 @@ class SEPAConfig:
 
     @property
     def iceberg_catalog_config(self) -> dict:
-        """Configuration for PyIceberg SQL Catalog"""
-        # SQLAlchemy URI for the catalog (metadata)
-        db_uri = f"postgresql+psycopg2://{self.sepa_user}:{self.sepa_password}@{self.sepa_host}:{self.sepa_port}/{self.sepa_db}"
+        """Configuration for PyIceberg REST Catalog (Nessie)"""
         # Ensure endpoint has scheme
         endpoint = self.minio_endpoint
         assert endpoint is not None
-        # If running locally on host, ensure we target localhost if env is internal
-        # if "minio" in endpoint and not "localhost" in endpoint and "127.0.0.1" not in endpoint:
-        #      # Heuristic: if we are running the script outside docker but env var is 'minio:9000'
-        #      endpoint = endpoint.replace("minio", "localhost")
 
         if not endpoint.startswith("http"):
             endpoint = f"http://{endpoint}"
 
         return {
-            "type": "sql",
-            "uri": db_uri,
+            "type": "rest",
+            "uri": "http://localhost:19120/iceberg/main",
             "warehouse": f"s3://{self.minio_bucket}/silver/iceberg",
             "s3.endpoint": endpoint,
             "s3.access-key-id": self.minio_access_key,
             "s3.secret-access-key": self.minio_secret_key,
-            "s3.region": self.minio_region,
-            # PyIceberg/PyArrow should handle scheme from endpoint, but path-style is usually needed for MinIO
-            # "s3.path-style-access": "true", # PyArrow might default correctly with custom endpoint, but let's try WITHOUT explicit first if PyArrow script worked without it.
-            # actually, PyArrow script didn't set it. let's comment it out to match.
-            "s3.signer": "s3v4",  # Force S3v4 signing for MinIO compatibility
+            "s3.region": self.minio_region or "us-east-1",
+            "s3.path-style-access": "true",
         }
 
     @property
