@@ -15,33 +15,38 @@
   Pre-aggregated daily price series by product and province.
   Input for: monthly inflation, seasonal decomposition, ADF test, SEPA vs INDEC IPC.
   Grain: (fecha_vigencia, id_producto, provincia)
+
+  Sources:
+  - fct_price_quotes: atomic deduped fact, 1 row per (fecha_vigencia, id_comercio,
+    id_sucursal, id_producto). Carries descripcion + marca directly — no product
+    dimension join needed or used here.
+  - dim_sucursales_current: table-materialized, 1 row per (id_sucursal, id_comercio),
+    joined only for provincia. Guaranteed 1:1 — no fanout risk.
 #}
 
-WITH cleaned_prices AS (
+WITH priced AS (
     SELECT
-        p.fecha_vigencia,
-        p.id_producto,
-        p.id_sucursal,
-        p.precio_lista,
-        {{ clean_description('d.descripcion') }} AS descripcion_clean,
-        d.marca,
+        f.fecha_vigencia,
+        f.id_producto,
+        f.id_sucursal,
+        f.precio_lista,
+        {{ clean_description('f.descripcion') }} AS descripcion_clean,
+        f.marca,
         s.provincia
-    FROM {{ ref('stg_precios') }} p
-    LEFT JOIN {{ ref('stg_dim_productos') }} d
-        ON p.id_producto = d.id_producto
-    LEFT JOIN {{ ref('stg_dim_sucursales') }} s
-        ON p.id_sucursal = s.id_sucursal
-        AND p.id_comercio = s.id_comercio
-    WHERE p.precio_lista >= 10.0
+    FROM {{ ref('fct_price_quotes') }} f
+    INNER JOIN {{ ref('dim_sucursales_current') }} s
+        ON f.id_sucursal = s.id_sucursal
+        AND f.id_comercio = s.id_comercio
+    WHERE f.precio_lista >= 10.0
       AND s.provincia IS NOT NULL
     {% if is_incremental() %}
       {% if target.type == 'bigquery' %}
-        AND p.fecha_vigencia >= DATE_SUB(
+        AND f.fecha_vigencia >= DATE_SUB(
             COALESCE((SELECT MAX(fecha_vigencia) FROM {{ this }}), '2000-01-01'),
             INTERVAL 2 DAY
         )
       {% else %}
-        AND p.fecha_vigencia >= (
+        AND f.fecha_vigencia >= (
             SELECT COALESCE(MAX(fecha_vigencia), DATE '2000-01-01') - INTERVAL 2 DAY FROM {{ this }}
         )
       {% endif %}
@@ -71,5 +76,5 @@ SELECT
     STDDEV(precio_lista) AS precio_desvio,
     COUNT(*) AS num_observaciones,
     COUNT(DISTINCT id_sucursal) AS num_sucursales
-FROM cleaned_prices
+FROM priced
 GROUP BY fecha_vigencia, id_producto, provincia

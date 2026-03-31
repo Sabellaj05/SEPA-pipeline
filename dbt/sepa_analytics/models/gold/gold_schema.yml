@@ -1,51 +1,6 @@
 version: 2
 
 models:
-  - name: gold_price_timeseries
-    description: >
-      Pre-aggregated daily price series by product and province. Designed for
-      time series analysis: monthly inflation (IPC), seasonal decomposition,
-      ADF stationarity testing, and SEPA vs INDEC comparison. Products are
-      cleaned (DISC: prefix stripped) and categorized into ~15 IPC-relevant groups.
-      Grain: (fecha_vigencia, id_producto, provincia).
-    columns:
-      - name: fecha_vigencia
-        description: "Business date of the price snapshot. Partition key."
-        tests:
-          - not_null
-      - name: id_producto
-        description: "Product identifier."
-        tests:
-          - not_null
-      - name: descripcion_clean
-        description: "Product description with DISC:/HVDC prefixes stripped."
-      - name: marca
-        description: "Product brand. ~7.8% NULL upstream."
-      - name: categoria_inferida
-        description: "Category inferred from keyword matching (dbt macro). Used for IPC grouping."
-        tests:
-          - not_null
-      - name: provincia
-        description: "Argentine province code (e.g., AR-B, AR-C). NULL rows excluded."
-        tests:
-          - not_null
-      - name: precio_promedio
-        description: "Mean precio_lista across stores in this province for this product."
-        tests:
-          - not_null
-      - name: precio_mediana
-        description: "Median precio_lista -- more robust to outliers than mean."
-      - name: precio_min
-        description: "Minimum observed precio_lista (cheapest store)."
-      - name: precio_max
-        description: "Maximum observed precio_lista (most expensive store)."
-      - name: precio_desvio
-        description: "Standard deviation of precio_lista. Proxy for price dispersion."
-      - name: num_observaciones
-        description: "Total price records contributing to this aggregation."
-      - name: num_sucursales
-        description: "Distinct store branches reporting this product in this province."
-
   - name: gold_cross_price_elasticity
     description: >
       Paired chain prices for the same product on the same date. Used for

@@ -1,0 +1,72 @@
+version: 2
+
+models:
+  - name: fct_price_quotes
+    description: >
+      Atomic price fact deduped to exactly 1 row per
+      (fecha_vigencia, id_comercio, id_sucursal, id_producto).
+      Latest scraped_at wins when multiple scrapes exist for the same grain.
+      Carries descripcion and marca directly from the Silver source row —
+      no product dimension join needed for those attributes.
+      All downstream gold models should reference this instead of stg_precios.
+    columns:
+      - name: fecha_vigencia
+        tests:
+          - not_null
+      - name: id_producto
+        tests:
+          - not_null
+      - name: id_sucursal
+        tests:
+          - not_null
+      - name: id_comercio
+        tests:
+          - not_null
+      - name: precio_lista
+        description: "Listed retail price. No lower bound filter applied here — apply >= 10.0 in gold models."
+
+  - name: dim_productos_current
+    description: >
+      Current-state product dimension: exactly 1 row per id_producto.
+      Deduped from the append-only Silver snapshot by latest fecha_vigencia.
+      Materialized as TABLE — uniqueness is enforced at build time, not query time.
+    columns:
+      - name: id_producto
+        description: "Product identifier. Unique key. Cast from INT64 to STRING."
+        tests:
+          - unique
+          - not_null
+      - name: descripcion
+        description: "Product name. 100% populated in Silver."
+      - name: marca
+        description: "Product brand. ~7.8% NULL in Silver."
+
+  - name: dim_sucursales_current
+    description: >
+      Current-state store dimension: exactly 1 row per (id_sucursal, id_comercio).
+      Deduped from the append-only Silver snapshot by latest fecha_vigencia.
+      Materialized as TABLE — uniqueness enforced at build time.
+    columns:
+      - name: id_sucursal
+        tests:
+          - not_null
+      - name: id_comercio
+        tests:
+          - not_null
+      - name: provincia
+        description: "Argentine province code. NULL for some branches in the source — filter IS NOT NULL in gold models."
+
+  - name: dim_comercios_current
+    description: >
+      Current-state merchant dimension: exactly 1 row per (id_comercio, id_bandera).
+      Deduped from the append-only Silver snapshot by latest fecha_vigencia.
+      Materialized as TABLE — uniqueness enforced at build time.
+    columns:
+      - name: id_comercio
+        tests:
+          - not_null
+      - name: id_bandera
+        tests:
+          - not_null
+      - name: bandera_nombre
+        description: "Commercial banner name (e.g., 'Coto', 'Jumbo')."

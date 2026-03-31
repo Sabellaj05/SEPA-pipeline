@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: gold_price_timeseries
+    description: >
+      Pre-aggregated daily price series by product and province.
+      Grain: (fecha_vigencia, id_producto, provincia).
+      Input for IPC inflation analysis, seasonal decomposition, and time-series modeling.
+      Built from fct_price_quotes (deduped atomic fact) joined to dim_sucursales_current
+      (table-materialized, guaranteed unique). No product dimension join — descripcion
+      and marca come directly from the fact.
+    columns:
+      - name: fecha_vigencia
+        tests:
+          - not_null
+      - name: id_producto
+        tests:
+          - not_null
+      - name: provincia
+        tests:
+          - not_null
+      - name: precio_promedio
+        description: "Mean price across all stores in the province for this product on this date."
+      - name: precio_mediana
+        description: "Median price. APPROX_QUANTILES on BigQuery; exact MEDIAN on DuckDB."
+      - name: num_observaciones
+        description: "Number of store-level price observations used in the aggregation."
+      - name: num_sucursales
+        description: "Count of distinct store branches that reported a price for this product."
+      - name: categoria_inferida
+        description: "IPC-aligned product category inferred from descripcion via categorize_product macro."
