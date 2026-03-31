@@ -50,6 +50,9 @@ services:
       volumes:
         - minio_data:/data
       command: server /data --console-address ":9001"
+      networks:
+        sepa_net:
+          ipv4_address: 172.20.0.10
       healthcheck:
         test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
         interval: 15s
@@ -75,8 +78,39 @@ services:
       echo 'Bucket ${MINIO_BUCKET} is ready and public';
       "
 
+  nessie:
+    image: ghcr.io/projectnessie/nessie:latest
+    container_name: sepa_nessie
+    ports:
+      - "19120:19120"
+    environment:
+      - NESSIE_VERSION_STORE_TYPE=IN_MEMORY
+      - NESSIE_CATALOG_DEFAULT_WAREHOUSE=warehouse
+      - NESSIE_CATALOG_WAREHOUSES_WAREHOUSE_LOCATION=s3://${MINIO_BUCKET}/silver/iceberg
+      # Use MinIO's static IP — accessible from host OS and all containers alike.
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_ENDPOINT=http://172.20.0.10:9000
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_PATH_STYLE_ACCESS=true
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_AUTH_TYPE=STATIC
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_AUTHENTICATION_TYPE=STATIC
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_REGION=us-east-1
+      - AWS_REGION=us-east-1
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_ACCESS_KEY=urn:nessie-secret:quarkus:nessie.minio.auth
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_SECRET_KEY=urn:nessie-secret:quarkus:nessie.minio.auth
+      - NESSIE_MINIO_AUTH_NAME=${MINIO_USER}
+      - NESSIE_MINIO_AUTH_SECRET=${MINIO_PASSWORD}
+    networks:
+      - sepa_net
+      - default
+
 
 volumes:
   sepa_pgdata:
   sepa_pgdata_test:
   minio_data:
+
+networks:
+  sepa_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
