@@ -84,7 +84,8 @@ services:
     ports:
       - "19120:19120"
     environment:
-      - NESSIE_VERSION_STORE_TYPE=IN_MEMORY
+      - NESSIE_VERSION_STORE_TYPE=ROCKSDB
+      - NESSIE_VERSION_STORE_PERSIST_ROCKS_DATABASE_PATH=/data/nessie-rocksdb
       - NESSIE_CATALOG_DEFAULT_WAREHOUSE=warehouse
       - NESSIE_CATALOG_WAREHOUSES_WAREHOUSE_LOCATION=s3://${MINIO_BUCKET}/silver/iceberg
       # Use MinIO's static IP — accessible from host OS and all containers alike.
@@ -98,6 +99,8 @@ services:
       - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_SECRET_KEY=urn:nessie-secret:quarkus:nessie.minio.auth
       - NESSIE_MINIO_AUTH_NAME=${MINIO_USER}
       - NESSIE_MINIO_AUTH_SECRET=${MINIO_PASSWORD}
+    volumes:
+      - nessie_data:/data/nessie-rocksdb
     networks:
       - sepa_net
       - default
@@ -107,6 +110,7 @@ volumes:
   sepa_pgdata:
   sepa_pgdata_test:
   minio_data:
+  nessie_data:
 
 networks:
   sepa_net:
