@@ -129,11 +129,11 @@ The project employs a dual-layer architecture to handle scale and distinct workl
 | **Silver Iceberg** | 27 GB | Indefinite | Analytics Ready |
 | **Postgres Hot** | 330 GB | 60-90 Days | Web App Queries (Auto-truncated) |
 
-## 8. Current Focus: Phase 4 - Analytics Layer (SPC-4)
+## 8. Phase 4 - Analytics Layer (SPC-4) -- Gold Layer Complete
 
-With the core ETL pipeline complete (SPC-3 Done), the focus is building a **Gold layer** using **dbt**.
+With the core ETL pipeline complete (SPC-3 Done), the Gold layer using **dbt** has been built and hardened.
 
-- **Linear Project**: `Analytics Layer SEPA-4` (issues SEP-257 through SEP-262)
+- **Linear Project**: `Analytics Layer SEPA-4` (issues SEP-257 through SEP-266)
 - **Adapter**: `dbt-bigquery` (primary), `dbt-duckdb` (secondary/local)
 - **Source**: Silver Iceberg tables in BigQuery (`sepa-lakehouse42.silver.*`)
 - **Target**: Separate `gold` BigQuery dataset (`sepa-lakehouse42.gold`)
@@ -156,13 +156,25 @@ With the core ETL pipeline complete (SPC-3 Done), the focus is building a **Gold
 2. **SEP-258**: Setup Gold BigQuery dataset -- **Done**
 3. **SEP-259**: Define Silver sources + staging models -- **Done**
 4. **SEP-260**: Create Gold mart models (`mart_daily_price_summary`, `mart_store_coverage`) -- **Done**
-5. **SEP-261**: End-to-end validation + documentation -- **Next**
-6. **SEP-262**: Add DuckDB local target -- Backlog
+5. **SEP-261**: End-to-end validation + documentation -- **Done**
+6. **SEP-262**: Add DuckDB local target -- **Done**
+7. **SEP-266**: Gold model hardening + intermediate layer -- **Done**
 
 ### Key Architectural Notes for Gold Layer
-- The Silver `precios` fact is a **narrow fact** -- `productos_descripcion` and `productos_marca` are NULL on it by design. Marts must JOIN `stg_dim_productos` for product attributes, not read from `stg_precios`.
+
+#### Intermediate Layer (`models/intermediate/`)
+Introduced in SEP-266 to fix a critical 35x row fanout caused by unreliable view-level deduplication through BigQuery's BigLake Iceberg adapter. The root cause: Silver dimensions are append-only daily snapshots; `QUALIFY ROW_NUMBER()` inside dbt views was not reliably applied by BigQuery when evaluating through the adapter.
+
+The intermediate layer resolves this by materializing deduplicated snapshots as **tables** at build time:
+- `dim_produtos_current` -- current-state product dimension, unique on `id_produto`
+- `dim_sucursales_current` -- current-state store dimension, unique on `(id_sucursal, id_comercio)`
+- `dim_comercios_current` -- current-state merchant dimension, unique on `(id_comercio, id_bandera)`
+- `fct_price_quotes` -- atomic deduped price fact (incremental, 2-day lookback); carries `descripcion` and `marca` directly from Silver, so downstream gold models no longer need to join `dim_produtos` for those attributes
+
+#### Gold Model Architecture
+- `gold_price_timeseries` references `fct_price_quotes` (not `stg_precios`) and uses `INNER JOIN dim_sucursales_current` (table-materialized, guaranteed 1:1). Verified on BigQuery: 7.4M rows for 2026-03-30, no high-cardinality join warnings.
+- `gold_cross_price_elasticity` and `gold_price_hypothesis` are **deprecated** -- they carry the same staging-join fanout and are superseded by the corrected architecture. Do not build on them.
 - All ID columns in staging models must be cast to `STRING` to match `stg_precios`. This is a hard requirement -- the staging layer owns the type contract for its columns.
-- Staging views are currently deployed to `sepa-lakehouse42.gold` (same dataset as marts). Schema separation will be cleaned up in SEP-261.
 - Editing staging `.sql` files on disk does NOT update the deployed view in BigQuery. Run `dbt run --select staging` to redeploy.
 - See `DOCS.md` Section 6 for the full Analytics Layer technical reference.
 
