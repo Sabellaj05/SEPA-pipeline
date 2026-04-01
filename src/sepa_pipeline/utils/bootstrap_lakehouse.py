@@ -2,6 +2,8 @@ import os
 
 import boto3
 from botocore.exceptions import ClientError
+from pyiceberg.catalog import load_catalog
+from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
 
 from sepa_pipeline.config import SEPAConfig
 from sepa_pipeline.utils.logger import get_logger
@@ -89,6 +91,66 @@ def bootstrap_lakehouse(local_dir: str | None = None) -> None:
     logger.info("Lakehouse bootstrap complete.")
 
 
+def teardown_silver_tables() -> None:
+    """
+    Drop all silver Iceberg tables from Nessie and delete all underlying S3 data.
+
+    Nessie does not purge S3 files when dropping tables, so orphaned UUID-suffixed
+    directories accumulate in MinIO. This function handles both sides: drops the
+    catalog entries from Nessie, then deletes everything under silver/iceberg/sepa/
+    in MinIO — which covers all UUID variants regardless of how many rebuild cycles
+    have run.
+    """
+    catalog = load_catalog("default", **config.iceberg_catalog_config)
+    bucket = config.minio_bucket or "sepa-lakehouse"
+
+    silver_tables = [
+        "sepa.precios",
+        "sepa.dim_comercios",
+        "sepa.dim_sucursales",
+        "sepa.dim_productos",
+    ]
+
+    for identifier in silver_tables:
+        try:
+            catalog.drop_table(identifier, purge_requested=False)
+            logger.info(f"[TEARDOWN] Dropped table: {identifier}")
+        except NoSuchTableError:
+            logger.info(f"[TEARDOWN] Table not found, skipping: {identifier}")
+        except Exception as e:
+            logger.error(f"[TEARDOWN] Failed to drop {identifier}: {e}")
+
+    try:
+        catalog.drop_namespace("sepa")
+        logger.info("[TEARDOWN] Dropped namespace: sepa")
+    except NoSuchNamespaceError:
+        pass
+    except Exception as e:
+        logger.warning(f"[TEARDOWN] Could not drop namespace sepa: {e}")
+
+    # Delete all S3 objects under the sepa namespace prefix.
+    # This covers all UUID-suffixed directories left behind by Nessie across
+    # any number of previous rebuild cycles.
+    prefix = "silver/iceberg/sepa/"
+    logger.info(f"[TEARDOWN] Deleting all S3 objects under s3://{bucket}/{prefix}")
+    try:
+        paginator = s3_client.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
+        keys = [obj["Key"] for page in pages for obj in page.get("Contents", [])]
+        if keys:
+            # S3 batch delete accepts up to 1000 keys per request
+            for i in range(0, len(keys), 1000):
+                batch = [{"Key": k} for k in keys[i : i + 1000]]
+                s3_client.delete_objects(Bucket=bucket, Delete={"Objects": batch})
+            logger.info(f"[TEARDOWN] Deleted {len(keys)} S3 objects.")
+        else:
+            logger.info("[TEARDOWN] No S3 objects found under prefix.")
+    except Exception as e:
+        logger.error(f"[TEARDOWN] S3 cleanup failed: {e}")
+
+    logger.info("[TEARDOWN] Silver teardown complete.")
+
+
 def check_exists_file(bucket, target_key) -> bool:
     try:
         # head object only retrieves metadata
@@ -103,7 +165,24 @@ def check_exists_file(bucket, target_key) -> bool:
 
 
 if __name__ == "__main__":
-    import sys
+    import argparse
 
-    manual_dir = sys.argv[1] if len(sys.argv) > 1 else None
-    bootstrap_lakehouse(manual_dir)
+    parser = argparse.ArgumentParser(description="Bootstrap or teardown the SEPA Lakehouse.")
+    parser.add_argument(
+        "local_dir",
+        nargs="?",
+        default=None,
+        help="Optional path to a local directory of sepa_precios_YYYY-MM-DD.zip files to upload to bronze.",
+    )
+    parser.add_argument(
+        "--teardown-silver",
+        action="store_true",
+        help="Drop all silver Iceberg tables from Nessie before bootstrapping. "
+             "Use this to rebuild silver with corrected table locations/partition specs.",
+    )
+    args = parser.parse_args()
+
+    if args.teardown_silver:
+        teardown_silver_tables()
+
+    bootstrap_lakehouse(args.local_dir)
