@@ -227,14 +227,10 @@ class IcebergLoader(BaseLoader):
                 pass
 
             try:
+                # Dimensions are intentionally unpartitioned — they are small snapshot
+                # tables and don't benefit from date partitioning.
                 table = self.catalog.create_table(identifier, schema=arrow_table.schema)
                 self._fix_io_endpoint(table)
-                with table.update_spec() as update:
-                    update.add_field(
-                        "fecha_vigencia",
-                        DayTransform(),
-                        partition_field_name="fecha_vigencia_day",
-                    )
                 # Ensure format version 2
                 with table.transaction() as tx:
                     tx.set_properties({"format-version": "2"})
@@ -293,3 +289,4 @@ class IcebergLoader(BaseLoader):
         if table:
             logger.info(f"[ICEBERG] Appending {len(new_products)} rows to dim_productos...")
             table.append(new_products.to_arrow())
+
