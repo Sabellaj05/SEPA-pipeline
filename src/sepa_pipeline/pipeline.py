@@ -331,7 +331,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--date",
         type=str,
-        help="Target date in YYYY-MM-DD format (default: today)",
+        help="Single target date in YYYY-MM-DD format (default: today)",
+        default=None,
+    )
+    parser.add_argument(
+        "--date-from",
+        type=str,
+        help="Start of date range in YYYY-MM-DD format (inclusive). Use with --date-to.",
+        default=None,
+    )
+    parser.add_argument(
+        "--date-to",
+        type=str,
+        help="End of date range in YYYY-MM-DD format (inclusive). Use with --date-from.",
         default=None,
     )
     parser.add_argument(
@@ -344,30 +356,35 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    # If explicit arguments are provided via CLI, use them
-    # Otherwise check if the user is running it without args (legacy behavior maybe?)
-    # But since we are adding argparse, any args will be parsed.
+    from datetime import timedelta
 
     config = SEPAConfig()
+    args = parse_args()
+    stages = [s.strip().lower() for s in args.stages.split(",")]
 
-    if len(sys.argv) > 1:
-        args = parse_args()
-        if args.date:
-            try:
-                # convert to date obj
-                target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
-            except ValueError:
-                logger.error("Invalid date format. Use YYYY-MM-DD")
-                sys.exit(1)
-        else:
-            target_date = Fecha().ahora.date()
+    def _parse_date(value: str) -> date:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            logger.error(f"Invalid date format '{value}'. Use YYYY-MM-DD.")
+            sys.exit(1)
 
-        stages = [s.strip().lower() for s in args.stages.split(",")]
+    if args.date_from or args.date_to:
+        if not (args.date_from and args.date_to):
+            logger.error("--date-from and --date-to must be used together.")
+            sys.exit(1)
+        date_from = _parse_date(args.date_from)
+        date_to = _parse_date(args.date_to)
+        if date_from > date_to:
+            logger.error("--date-from must be earlier than or equal to --date-to.")
+            sys.exit(1)
+        dates = [date_from + timedelta(days=i) for i in range((date_to - date_from).days + 1)]
+    elif args.date:
+        dates = [_parse_date(args.date)]
     else:
-        # Default behavior if no args provided
-        target_date = Fecha().ahora.date()
-        stages = ["postgres", "iceberg", "parquet", "bigquery"]
+        dates = [Fecha().ahora.date()]
 
-    logger.info(f"Arguments -> Date: {target_date}, Stages: {stages}")
+    logger.info(f"Arguments -> Dates: {dates[0]} to {dates[-1]} ({len(dates)} day(s)), Stages: {stages}")
 
-    process_daily_data(target_date, config, stages)
+    for target_date in dates:
+        process_daily_data(target_date, config, stages)
