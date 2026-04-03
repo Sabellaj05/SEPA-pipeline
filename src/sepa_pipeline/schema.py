@@ -271,6 +271,9 @@ def to_silver_precios(df: pl.DataFrame) -> pl.DataFrame:
     """
     Transform a validated raw productos DataFrame to the Silver precios schema.
     fecha_vigencia and scraped_at are excluded — the pipeline adds them at load time.
+
+    Normalizations applied:
+    - marca null → "S/D"  (standard placeholder in SEPA source for unknown brand)
     """
     df = df.rename({k: v for k, v in PRECIOS_RAW_TO_SILVER.items() if k in df.columns})
 
@@ -281,6 +284,8 @@ def to_silver_precios(df: pl.DataFrame) -> pl.DataFrame:
                 "cantidad_referencia", "precio_promo1", "precio_promo2"):
         if col in df.columns:
             cast_exprs.append(pl.col(col).cast(pl.Float64, strict=False))
+    if "marca" in df.columns:
+        cast_exprs.append(pl.col("marca").fill_null("S/D").alias("marca"))
     if cast_exprs:
         df = df.with_columns(cast_exprs)
 
@@ -291,6 +296,9 @@ def to_silver_sucursales(df: pl.DataFrame) -> pl.DataFrame:
     """
     Transform a validated raw sucursales DataFrame to the Silver dim_sucursales schema.
     fecha_vigencia is excluded — the pipeline adds it at load time.
+
+    Normalizations applied:
+    - provincia "Buenos Aires" → "AR-B"  (some stores file full name instead of ISO 3166-2)
     """
     df = df.rename({k: v for k, v in SUCURSALES_RAW_TO_SILVER.items() if k in df.columns})
 
@@ -298,6 +306,10 @@ def to_silver_sucursales(df: pl.DataFrame) -> pl.DataFrame:
     for col in ("latitud", "longitud"):
         if col in df.columns:
             cast_exprs.append(pl.col(col).cast(pl.Float64, strict=False))
+    if "provincia" in df.columns:
+        cast_exprs.append(
+            pl.col("provincia").str.replace_all("^Buenos Aires$", "AR-B").alias("provincia")
+        )
     if cast_exprs:
         df = df.with_columns(cast_exprs)
 
@@ -318,6 +330,9 @@ def to_silver_productos(df: pl.DataFrame) -> pl.DataFrame:
     Transform a validated raw productos DataFrame to the Silver dim_productos schema.
     Expects df already deduplicated on id_producto (pipeline responsibility).
     fecha_vigencia is excluded — the pipeline adds it at load time.
+
+    Normalizations applied:
+    - marca null → "S/D"  (standard placeholder in SEPA source for unknown brand)
     """
     df = df.rename({k: v for k, v in PRECIOS_RAW_TO_SILVER.items() if k in df.columns})
 
@@ -326,6 +341,8 @@ def to_silver_productos(df: pl.DataFrame) -> pl.DataFrame:
         cast_exprs.append((pl.col("ean").cast(pl.Utf8).str.strip_chars() == "1").alias("ean"))
     if "cantidad_presentacion" in df.columns:
         cast_exprs.append(pl.col("cantidad_presentacion").cast(pl.Float64, strict=False))
+    if "marca" in df.columns:
+        cast_exprs.append(pl.col("marca").fill_null("S/D").alias("marca"))
     if cast_exprs:
         df = df.with_columns(cast_exprs)
 
