@@ -7,7 +7,7 @@ from typing import Tuple
 
 import polars as pl
 
-from sepa_pipeline.config import get_schema_dict
+from sepa_pipeline.schema import get_schema_dict
 from sepa_pipeline.utils.logger import get_logger
 
 logger = get_logger(__name__)
