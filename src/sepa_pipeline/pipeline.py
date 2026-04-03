@@ -15,9 +15,16 @@ from sepa_pipeline.loaders.postgres_loader import PostgresLoader
 from sepa_pipeline.loaders.iceberg_loader import IcebergLoader
 from sepa_pipeline.loaders.parquet_loader import ParquetLoader
 from sepa_pipeline.loaders.bigquery_loader import BigQueryLoader
+from sepa_pipeline.schema import (
+    get_schema_dict,
+    to_silver_precios,
+    to_silver_sucursales,
+    to_silver_comercios,
+    to_silver_productos,
+)
 from sepa_pipeline.utils.fecha import Fecha
 from sepa_pipeline.utils.logger import get_logger
-from sepa_pipeline.validator import SEPAValidator, get_schema_dict
+from sepa_pipeline.validator import SEPAValidator
 
 logger = get_logger(__name__)
 
@@ -207,12 +214,12 @@ def process_daily_data(
             postgres_loader._upsert_sucursales(df_sucursales)
 
         if iceberg_loader:
-            iceberg_loader.load_comercios(df_comercios, target_date)
-            iceberg_loader.load_sucursales(df_sucursales, target_date)
+            iceberg_loader.load_comercios(to_silver_comercios(df_comercios), target_date)
+            iceberg_loader.load_sucursales(to_silver_sucursales(df_sucursales), target_date)
 
         if bigquery_loader:
-            bigquery_loader.load_comercios(df_comercios, target_date)
-            bigquery_loader.load_sucursales(df_sucursales, target_date)
+            bigquery_loader.load_comercios(to_silver_comercios(df_comercios), target_date)
+            bigquery_loader.load_sucursales(to_silver_sucursales(df_sucursales), target_date)
 
         # Free memory
         del all_comercios
@@ -253,42 +260,28 @@ def process_daily_data(
                 )
 
                 if df_producto.height > 0:
-                    # Upsert Products Master
+                    # Postgres uses raw column names — no transform needed
                     if postgres_loader:
                         postgres_loader._upsert_productos_master(df_producto)
-
-                        # Load Prices
                         postgres_loader._bulk_load_precios(df_producto, target_date)
 
-                    # Isolate true Fact columns before sending to Lakehouse
-                    df_fact = df_producto.select([
-                        "id_comercio",
-                        "id_bandera",
-                        "id_sucursal",
-                        "id_producto",
-                        "productos_precio_lista",
-                        "productos_precio_referencia",
-                        "productos_cantidad_referencia",
-                        "productos_unidad_medida_referencia",
-                        "productos_precio_unitario_promo1",
-                        "productos_leyenda_promo1",
-                        "productos_precio_unitario_promo2",
-                        "productos_leyenda_promo2"
-                    ])
+                    # Transform to Silver schema for all Lakehouse targets
+                    df_silver = to_silver_precios(df_producto)
+                    df_silver_dim = to_silver_productos(df_producto)
 
                     # Archive to Iceberg (Silver Layer)
                     if iceberg_loader:
-                        iceberg_loader.load_productos(df_producto, target_date)
-                        iceberg_loader.load(df_fact, target_date)
+                        iceberg_loader.load_productos(df_silver_dim, target_date)
+                        iceberg_loader.load(df_silver, target_date)
 
                     # Archive to Parquet (Bronze Layer)
                     if parquet_loader:
-                        parquet_loader.load(df_fact, target_date)
+                        parquet_loader.load(df_silver, target_date)
 
                     # Export to BigQuery Data Lakehouse
                     if bigquery_loader:
-                        bigquery_loader.load_productos(df_producto, target_date)
-                        bigquery_loader.load(df_fact, target_date)
+                        bigquery_loader.load_productos(df_silver_dim, target_date)
+                        bigquery_loader.load(df_silver, target_date)
 
                     total_prices_loaded += df_producto.height
 
