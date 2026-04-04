@@ -40,11 +40,9 @@ class IcebergLoader(BaseLoader):
         Nessie is configured to use 'http://minio:9000' internally (Docker network).
         It embeds this into the Iceberg REST catalog response as an 'override', so
         PyIceberg's FsspecFileIO picks it up. From the host OS, 'minio' is not
-        resolvable. This method patches the endpoint to 'localhost:9000' BEFORE
+        resolvable, so this method patches the endpoint to 'localhost:9000' BEFORE
         the first file operation, so the per-thread filesystem cache is built
         with the correct URL.
-        StarRocks (running inside Docker) does NOT use this FileIO — it has its
-        own Java S3 client configured via the catalog's 'aws.s3.endpoint' property.
         """
         s3_endpoint = self.config.minio_endpoint  # e.g. http://localhost:9000
         if hasattr(table, "_io") and hasattr(table._io, "properties"):
