@@ -38,11 +38,12 @@ SEPA-pipeline/
 ├── src/
 │   └── sepa_pipeline/
 │       ├── __init__.py
-│       ├── config.py     # Centralized config (Env vars, Paths, Constants).
+│       ├── config.py     # Infrastructure config only (Env vars, Paths, catalog configs).
+│       ├── schema.py     # Silver/Bronze schema contract (schemas, rename maps, transforms).
 │       ├── extractor.py  # ZIP extraction & S3 Fetching logic.
 │       ├── pipeline.py   # Main Orchestrator (CLI Entry Point).
 │       ├── scraper.py    # Web scraping & Raw S3 Upload.
-│       ├── validator.py  # Data validation & Schema enforcement.
+│       ├── validator.py  # CSV reading, validation, referential integrity.
 │       ├── loaders/
 │       │   ├── base.py
 │       │   ├── iceberg_loader.py
@@ -52,6 +53,7 @@ SEPA-pipeline/
 │       └── utils/
 │           ├── bootstrap_lakehouse.py  # MinIO Setup & Backfill Utility.
 │           ├── scan_bronze_dates.py    # Historical archive validation utility.
+│           ├── verify_silver.py        # Silver layer health check CLI.
 │           └── logger.py
 ├── tests/
 ├── AGENT.md              # This file.
@@ -76,12 +78,19 @@ The project employs a dual-layer architecture to handle scale and distinct workl
 - **Role**: Cold Store / Data Lake. Historical analysis and massive aggregations.
 - **Structure**:
     - **Bronze**: Raw ZIP files stored in MinIO (`s3://sepa-lakehouse/bronze/raw`).
-    - **Silver**: Cleaned data stored as Apache Iceberg tables in GCS (`gs://sepa-lakehouse-silver-74dbadf7/warehouse/silver/iceberg`) and MinIO. Matches the Operational schema (Star Schema):
-        - **Fact**: `precios` (Partitioned by `Day(fecha_vigencia)`).
-        - **Dimensions**: `dim_comercios`, `dim_sucursales`, `dim_productos` (Appended via Daily Snapshots, partitioned by `Day(fecha_vigencia)`).
+    - **Silver**: Cleaned data stored as Apache Iceberg tables in GCS (`gs://sepa-lakehouse-silver-74dbadf7/warehouse/silver/iceberg`) and MinIO. Star schema with an explicit Python schema contract (`schema.py`):
+        - **Fact**: `sepa.precios` — ~15M rows/day, partitioned by `Day(fecha_vigencia)`. Carries `descripcion` and `marca` denormalized from source to avoid per-query dim joins in Gold.
+        - **Dim**: `sepa.dim_comercios` — unpartitioned, daily snapshot (append-only).
+        - **Dim**: `sepa.dim_sucursales` — unpartitioned, daily snapshot. Excludes 7 horario columns (operational, never queried).
+        - **Dim**: `sepa.dim_productos` — unpartitioned, daily snapshot. Deduped on `id_producto` at load time.
+    - **Silver Schema Contract**: All four tables are defined in `schema.py` with column types, rename maps, and Silver transform functions (`to_silver_*()`). Bronze stays raw (all `Utf8`); transforms run at pipeline load time. dbt staging models do `SELECT *` — the schema is owned by the pipeline, not dbt.
+    - **Data Quality Normalizations**:
+        - `marca` null → `"S/D"` (standard SEPA placeholder for unknown brand)
+        - `provincia = "Buenos Aires"` → `"AR-B"` ISO 3166-2 (some stores file full name)
 - **Catalog Integration**: 
-    - **Local**: PostgreSQL is used as the Iceberg Catalog.
-    - **Cloud**: Google Cloud BigLake operates directly against PyIceberg's native BigQuery catalog (`bigquery_loader.py`) for serverless analytics.
+    - **Local**: Project Nessie REST catalog (backed by PostgreSQL) + MinIO for file storage.
+    - **Cloud**: Google Cloud BigLake via PyIceberg's native BigQuery catalog (`bigquery_loader.py`) for serverless analytics.
+- **Health Check**: `uv run python -m sepa_pipeline.utils.verify_silver [--date YYYY-MM-DD] [--catalog nessie|bigquery]` — validates row counts, schema, null audits, partition pruning, and province ISO format for all four Silver tables.
 
 ## 5. Development Workflow
 
@@ -178,3 +187,37 @@ The intermediate layer resolves this by materializing deduplicated snapshots as 
 - Editing staging `.sql` files on disk does NOT update the deployed view in BigQuery. Run `dbt run --select staging` to redeploy.
 - See `DOCS.md` Section 6 for the full Analytics Layer technical reference.
 
+## 9. Silver Layer Schema Contract (SEP-267+)
+
+### What was done
+
+A formal Silver schema contract was introduced to fix a data quality root cause: `descripcion` and `marca` columns were never written to Silver (they were silently dropped in pipeline Phase 3). This caused `gold_price_timeseries` to return 0 valid rows for all dates from 2026-03-24 onward.
+
+**New / changed files:**
+
+| File | Change |
+|:---|:---|
+| `schema.py` | **New.** Owns all Bronze schemas, Silver schemas, rename maps, and `to_silver_*()` transform functions. |
+| `config.py` | **Updated.** Infrastructure config only. Re-exports `get_schema_dict` for backward compatibility. |
+| `validator.py` | **Updated.** Added `_read_csv()`, `load_dimensions()`, and `load_productos_chunk()`. CSV reading logic moved out of pipeline.py. |
+| `pipeline.py` | **Updated.** Phase 2/3 now call `validator.load_dimensions()` and `validator.load_productos_chunk()`, then apply `to_silver_*()` transforms before every Lakehouse write. |
+| `utils/verify_silver.py` | **New.** CLI health check for all four Silver Iceberg tables. |
+
+**Key design decisions:**
+
+- Silver schema is the contract. dbt staging models do `SELECT *` and add no column logic beyond type casting.
+- Dims are **unpartitioned** by design — they are daily snapshots (append-only), not point-in-time histories. Filtering by `fecha_vigencia` on unpartitioned tables is cheap at dim scale (<500K rows/day).
+- `precios` (fact) is partitioned by `Day(fecha_vigencia)` — required for scan efficiency at 15M rows/day.
+- `descripcion` and `marca` are denormalized onto `precios` to avoid a 90K-row dim join on every Gold aggregation.
+
+### Pending: BigQuery Silver Rebuild + dbt Fix
+
+The Silver schema fix applies immediately to new Nessie/MinIO writes. **BigQuery Silver tables still contain the old schema** (missing `descripcion`, `marca`, wrong column names on dims). This is a separate PR.
+
+See **DOCS.md Section 9** for the full implementation guide, including:
+- Teardown procedure for BigQuery Silver via PyIceberg
+- Pipeline rerun command for backfill
+- New `stg_precios.sql` (passthrough of Silver column names — no renaming needed)
+- Updated staging models for dims
+- dbt rebuild sequence: `staging` → `intermediate --full-refresh` → `gold`
+- Verification via `verify_silver.py --catalog bigquery`

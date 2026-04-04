@@ -15,9 +15,16 @@ from sepa_pipeline.loaders.postgres_loader import PostgresLoader
 from sepa_pipeline.loaders.iceberg_loader import IcebergLoader
 from sepa_pipeline.loaders.parquet_loader import ParquetLoader
 from sepa_pipeline.loaders.bigquery_loader import BigQueryLoader
+from sepa_pipeline.schema import (
+    get_schema_dict,
+    to_silver_precios,
+    to_silver_sucursales,
+    to_silver_comercios,
+    to_silver_productos,
+)
 from sepa_pipeline.utils.fecha import Fecha
 from sepa_pipeline.utils.logger import get_logger
-from sepa_pipeline.validator import SEPAValidator, get_schema_dict
+from sepa_pipeline.validator import SEPAValidator
 
 logger = get_logger(__name__)
 
@@ -89,117 +96,16 @@ def process_daily_data(
             bigquery_loader.setup(target_date)
 
         # --- Phase 2: Load Dimensions (Comercios & Sucursales) ---
-        # Only if Postges is enabled or we decide dims are needed for both
-        # Currently referential integrity uses dims, so we might need to load valid dims into memory regardless.
-        # But upserting to DB should be gated.
         logger.info("Phase 2: Loading Dimensions (Comercios & Sucursales)")
-
-        all_comercios = []
-        all_sucursales = []
-
-        # Get schemas
-        comercio_schema = get_schema_dict("comercio")
-        sucursales_schema = get_schema_dict("sucursales")
-        productos_schema = get_schema_dict("productos")
 
         validator = SEPAValidator()
 
         if any(s in stages for s in ["postgres", "iceberg", "bigquery"]):
-            for idx, csv_paths in enumerate(all_csv_paths):
-                logger.info(
-                    f"Dimensions Scan: Processing file {idx + 1}/{len(all_csv_paths)}"
-                )
-
-                # Read comercio.csv
-                try:
-                    df_comercio = pl.read_csv(
-                        csv_paths["comercio"],
-                        separator="|",
-                        encoding="utf8-lossy",
-                        has_header=True,
-                        null_values=["", "NULL", "null"],
-                        schema_overrides=comercio_schema,
-                        truncate_ragged_lines=True,
-                        ignore_errors=True,
-                        quote_char=None,  # Fix for malformed CSVs
-                    )
-                    # Clean BOM
-                    df_comercio = df_comercio.rename(
-                        {
-                            col: col.lstrip("\ufeff").strip()
-                            for col in df_comercio.columns
-                        }
-                    )
-
-                    # VALIDATE IMMEDIATELY
-                    df_comercio = validator.validate_comercio(df_comercio)
-
-                    if df_comercio.height > 0:
-                        all_comercios.append(df_comercio)
-
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to read/validate comercio {csv_paths['comercio']}: {e}"
-                    )
-
-                # Read sucursales.csv
-                try:
-                    df_sucursal = pl.read_csv(
-                        csv_paths["sucursales"],
-                        separator="|",
-                        encoding="utf8-lossy",
-                        has_header=True,
-                        null_values=["", "NULL", "null"],
-                        schema_overrides=sucursales_schema,
-                        truncate_ragged_lines=True,
-                        ignore_errors=True,
-                        quote_char=None,  # Fix for malformed CSVs
-                    )
-                    # Clean BOM
-                    df_sucursal = df_sucursal.rename(
-                        {
-                            col: col.lstrip("\ufeff").strip()
-                            for col in df_sucursal.columns
-                        }
-                    )
-
-                    # VALIDATE IMMEDIATELY
-                    df_sucursal = validator.validate_sucursales(df_sucursal)
-
-                    if df_sucursal.height > 0:
-                        all_sucursales.append(df_sucursal)
-
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to read/validate sucursales {csv_paths['sucursales']}: {e}"
-                    )
-
-            # Concatenate and Validate Dimensions
-            logger.info("Concatenating dimensions...")
-            if all_comercios:
-                df_comercios = pl.concat(all_comercios).unique()
-            else:
-                df_comercios = pl.DataFrame(schema=comercio_schema)
-
-            if all_sucursales:
-                df_sucursales = pl.concat(all_sucursales).unique()
-            else:
-                df_sucursales = pl.DataFrame(schema=sucursales_schema)
-
+            df_comercios, df_sucursales = validator.load_dimensions(all_csv_paths)
         else:
-            # If skipping everything that needs dimensions, initialize empty DFs
-            df_comercios = pl.DataFrame(schema=comercio_schema)
-            df_sucursales = pl.DataFrame(schema=sucursales_schema)
-
-        df_comercios = validator.validate_comercio(df_comercios)
-        df_sucursales = validator.validate_sucursales(df_sucursales)
-
-        # Validate Referential Integrity for Dimensions (clean orphaned sucursales)
-        # We pass an empty products DF as we haven't loaded them yet
-        empty_products = pl.DataFrame(schema=productos_schema)
-        df_sucursales, _ = validator.validate_referential_integrity(
-            df_comercios, df_sucursales, empty_products
-        )
+            # Parquet-only run — dimensions not needed, use empty stubs
+            df_comercios = pl.DataFrame(schema=get_schema_dict("comercio"))
+            df_sucursales = pl.DataFrame(schema=get_schema_dict("sucursales"))
 
         # Load Dimensions
         if postgres_loader:
@@ -207,17 +113,14 @@ def process_daily_data(
             postgres_loader._upsert_sucursales(df_sucursales)
 
         if iceberg_loader:
-            iceberg_loader.load_comercios(df_comercios, target_date)
-            iceberg_loader.load_sucursales(df_sucursales, target_date)
+            iceberg_loader.load_comercios(to_silver_comercios(df_comercios), target_date)
+            iceberg_loader.load_sucursales(to_silver_sucursales(df_sucursales), target_date)
 
         if bigquery_loader:
-            bigquery_loader.load_comercios(df_comercios, target_date)
-            bigquery_loader.load_sucursales(df_sucursales, target_date)
+            bigquery_loader.load_comercios(to_silver_comercios(df_comercios), target_date)
+            bigquery_loader.load_sucursales(to_silver_sucursales(df_sucursales), target_date)
 
-        # Free memory
-        del all_comercios
-        del all_sucursales
-        # We keep df_comercios and df_sucursales for referential integrity checks
+        # We keep df_comercios and df_sucursales for referential integrity checks in Phase 3
 
         # --- Phase 3: Chunked Product & Price Loading ---
         logger.info("Phase 3: Loading Products and Prices (Chunked)")
@@ -227,75 +130,35 @@ def process_daily_data(
         for idx, csv_paths in enumerate(all_csv_paths):
             logger.info(f"Processing chunk {idx + 1}/{len(all_csv_paths)}")
 
-            try:
-                df_producto = pl.read_csv(
-                    csv_paths["productos"],
-                    separator="|",
-                    encoding="utf8-lossy",
-                    has_header=True,
-                    null_values=["", "NULL", "null"],
-                    schema_overrides=productos_schema,
-                    truncate_ragged_lines=True,
-                    ignore_errors=True,
-                    quote_char=None,  # Fix for malformed CSVs
-                )
-                df_producto = df_producto.rename(
-                    {col: col.lstrip("\ufeff").strip() for col in df_producto.columns}
-                )
+            df_producto = validator.load_productos_chunk(
+                csv_paths, df_comercios, df_sucursales
+            )
 
-                # Validate Schema
-                df_producto = validator.validate_productos(df_producto)
+            if df_producto.height > 0:
+                # Postgres uses raw column names — no transform needed
+                if postgres_loader:
+                    postgres_loader._upsert_productos_master(df_producto)
+                    postgres_loader._bulk_load_precios(df_producto, target_date)
 
-                # Validate Referential Integrity (against loaded dimensions)
-                # Note: We don't need to update sucursales here, just filter products
-                _, df_producto = validator.validate_referential_integrity(
-                    df_comercios, df_sucursales, df_producto
-                )
+                # Transform to Silver schema for all Lakehouse targets
+                df_silver = to_silver_precios(df_producto)
+                df_silver_dim = to_silver_productos(df_producto)
 
-                if df_producto.height > 0:
-                    # Upsert Products Master
-                    if postgres_loader:
-                        postgres_loader._upsert_productos_master(df_producto)
+                # Archive to Iceberg (Silver Layer)
+                if iceberg_loader:
+                    iceberg_loader.load_productos(df_silver_dim, target_date)
+                    iceberg_loader.load(df_silver, target_date)
 
-                        # Load Prices
-                        postgres_loader._bulk_load_precios(df_producto, target_date)
+                # Archive to Parquet (Bronze Layer)
+                if parquet_loader:
+                    parquet_loader.load(df_silver, target_date)
 
-                    # Isolate true Fact columns before sending to Lakehouse
-                    df_fact = df_producto.select([
-                        "id_comercio",
-                        "id_bandera",
-                        "id_sucursal",
-                        "id_producto",
-                        "productos_precio_lista",
-                        "productos_precio_referencia",
-                        "productos_cantidad_referencia",
-                        "productos_unidad_medida_referencia",
-                        "productos_precio_unitario_promo1",
-                        "productos_leyenda_promo1",
-                        "productos_precio_unitario_promo2",
-                        "productos_leyenda_promo2"
-                    ])
+                # Export to BigQuery Data Lakehouse
+                if bigquery_loader:
+                    bigquery_loader.load_productos(df_silver_dim, target_date)
+                    bigquery_loader.load(df_silver, target_date)
 
-                    # Archive to Iceberg (Silver Layer)
-                    if iceberg_loader:
-                        iceberg_loader.load_productos(df_producto, target_date)
-                        iceberg_loader.load(df_fact, target_date)
-
-                    # Archive to Parquet (Bronze Layer)
-                    if parquet_loader:
-                        parquet_loader.load(df_fact, target_date)
-
-                    # Export to BigQuery Data Lakehouse
-                    if bigquery_loader:
-                        bigquery_loader.load_productos(df_producto, target_date)
-                        bigquery_loader.load(df_fact, target_date)
-
-                    total_prices_loaded += df_producto.height
-
-            except Exception as e:
-                logger.error(f"Failed to process chunk {idx + 1}: {e}")
-                # Continue to next chunk instead of crashing entire pipeline?
-                # For now, let's log and continue.
+                total_prices_loaded += df_producto.height
 
     finally:
         # Cleanup Temporary Bronze Directory
