@@ -1,6 +1,17 @@
 """
 SEPA Data Validator
-Handles schema validation and data cleaning.
+
+Owns all CSV ingestion and data cleaning for the three SEPA source files.
+Pipeline.py delegates here for both reading and validation so that the
+orchestrator stays free of data-wrangling details.
+
+Public surface:
+    SEPAValidator.load_dimensions(all_csv_paths)           → (df_comercios, df_sucursales)
+    SEPAValidator.load_productos_chunk(csv_paths, ...)     → df_producto
+    SEPAValidator.validate_comercio(df)                    → df
+    SEPAValidator.validate_sucursales(df)                  → df
+    SEPAValidator.validate_productos(df)                   → df
+    SEPAValidator.validate_referential_integrity(...)      → (df_sucursales, df_productos)
 """
 
 from typing import Tuple
@@ -39,6 +50,107 @@ class SEPAValidator:
         "tienda virtual",
         "tienda fisica",
     }
+
+    @staticmethod
+    def _read_csv(path: str, schema: dict) -> pl.DataFrame:
+        """
+        Read a SEPA pipe-delimited CSV and strip BOM / whitespace from column names.
+        All three SEPA files share the same encoding and delimiter rules.
+        """
+        df = pl.read_csv(
+            path,
+            separator="|",
+            encoding="utf8-lossy",
+            has_header=True,
+            null_values=["", "NULL", "null"],
+            schema_overrides=schema,
+            truncate_ragged_lines=True,
+            ignore_errors=True,
+            quote_char=None,
+        )
+        return df.rename({col: col.lstrip("\ufeff").strip() for col in df.columns})
+
+    def load_dimensions(
+        self,
+        all_csv_paths: list[dict],
+    ) -> Tuple[pl.DataFrame, pl.DataFrame]:
+        """
+        Read, validate, deduplicate, and referential-integrity-check all
+        comercio and sucursales CSVs across every store ZIP for one pipeline run.
+
+        Returns (df_comercios, df_sucursales) in raw Bronze schema.
+        A store whose files fail to read is skipped with a warning — the rest proceed.
+        """
+        comercio_schema = get_schema_dict("comercio")
+        sucursales_schema = get_schema_dict("sucursales")
+        productos_schema = get_schema_dict("productos")
+
+        all_comercios: list[pl.DataFrame] = []
+        all_sucursales: list[pl.DataFrame] = []
+
+        for idx, csv_paths in enumerate(all_csv_paths):
+            logger.info(f"Dimensions scan: processing file {idx + 1}/{len(all_csv_paths)}")
+
+            try:
+                df_comercio = self._read_csv(csv_paths["comercio"], comercio_schema)
+                df_comercio = self.validate_comercio(df_comercio)
+                if df_comercio.height > 0:
+                    all_comercios.append(df_comercio)
+            except Exception as e:
+                logger.warning(f"Failed to read/validate comercio {csv_paths['comercio']}: {e}")
+
+            try:
+                df_sucursal = self._read_csv(csv_paths["sucursales"], sucursales_schema)
+                df_sucursal = self.validate_sucursales(df_sucursal)
+                if df_sucursal.height > 0:
+                    all_sucursales.append(df_sucursal)
+            except Exception as e:
+                logger.warning(f"Failed to read/validate sucursales {csv_paths['sucursales']}: {e}")
+
+        logger.info("Concatenating dimensions...")
+        df_comercios = (
+            pl.concat(all_comercios).unique()
+            if all_comercios
+            else pl.DataFrame(schema=comercio_schema)
+        )
+        df_sucursales = (
+            pl.concat(all_sucursales).unique()
+            if all_sucursales
+            else pl.DataFrame(schema=sucursales_schema)
+        )
+
+        # Final validation pass after concat
+        df_comercios = self.validate_comercio(df_comercios)
+        df_sucursales = self.validate_sucursales(df_sucursales)
+
+        # Enforce referential integrity between the two dimensions
+        empty_products = pl.DataFrame(schema=productos_schema)
+        df_sucursales, _ = self.validate_referential_integrity(
+            df_comercios, df_sucursales, empty_products
+        )
+
+        return df_comercios, df_sucursales
+
+    def load_productos_chunk(
+        self,
+        csv_paths: dict,
+        df_comercios: pl.DataFrame,
+        df_sucursales: pl.DataFrame,
+    ) -> pl.DataFrame:
+        """
+        Read, validate, and referential-integrity-check one store's productos.csv.
+        Returns an empty DataFrame (productos schema) on any read or validation failure
+        so the pipeline loop can continue without crashing.
+        """
+        productos_schema = get_schema_dict("productos")
+        try:
+            df = self._read_csv(csv_paths["productos"], productos_schema)
+            df = self.validate_productos(df)
+            _, df = self.validate_referential_integrity(df_comercios, df_sucursales, df)
+            return df
+        except Exception as e:
+            logger.warning(f"Failed to read/validate productos {csv_paths['productos']}: {e}")
+            return pl.DataFrame(schema=productos_schema)
 
     @staticmethod
     def _drop_footer_rows(df: pl.DataFrame, first_column: str) -> pl.DataFrame:
