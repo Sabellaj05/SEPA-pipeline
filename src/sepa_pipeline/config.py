@@ -26,13 +26,6 @@ class SEPAConfig:
     """
 
     def __init__(self):
-        # PostgreSQL
-        self.sepa_user: str | None = os.getenv("POSTGRES_USER")
-        self.sepa_password: str | None = os.getenv("POSTGRES_PASSWORD")
-        self.sepa_db: str | None = os.getenv("POSTGRES_DB")
-        self.sepa_host: str | None = os.getenv("POSTGRES_HOST", "localhost")
-        self.sepa_port: str | None = os.getenv("POSTGRES_PORT")
-
         # MinIO / S3
         self.minio_endpoint: str | None = os.getenv("MINIO_ENDPOINT")
         self.minio_access_key: str | None = os.getenv(
@@ -43,10 +36,6 @@ class SEPAConfig:
         )
         self.minio_bucket: str | None = os.getenv("MINIO_BUCKET")
         self.minio_region: str | None = os.getenv("MINIO_REGION")
-
-        # Pipeline tuning
-        self.retention_days_postgres: int = int(os.getenv("RETENTION_DAYS_POSTGRES", "90"))
-        self.max_workers: int = int(os.getenv("MAX_WORKERS_POSTGRES", "8"))
 
         self._validate()
 
@@ -59,29 +48,22 @@ class SEPAConfig:
         # GCP is optional for local-only runs but required for BigQuery loader
         self.gcp_project: str | None = os.getenv("GCP_PROJECT", "sepa-lakehouse42")
         self.gcp_dataset: str | None = os.getenv("GCP_DATASET", "silver")
-        self.gcp_bucket: str | None = os.getenv("GCP_BUCKET", "sepa-lakehouse-silver-74dbadf7")
+        self.gcp_bucket: str | None = os.getenv(
+            "GCP_BUCKET", "sepa-lakehouse-silver-74dbadf7"
+        )
         self.gcp_dataset_gold: str | None = os.getenv("GCP_DATASET_GOLD", "gold")
         self.gcp_location: str | None = os.getenv("GCP_LOCATION", "US")
 
         required = {
-            "POSTGRES_USER":     self.sepa_user,
-            "POSTGRES_PASSWORD": self.sepa_password,
-            "POSTGRES_DB":       self.sepa_db,
-            "POSTGRES_HOST":     self.sepa_host,
-            "POSTGRES_PORT":     self.sepa_port,
             "MINIO_ENDPOINT":    self.minio_endpoint,
             "MINIO_BUCKET":      self.minio_bucket,
         }
         missing = [k for k, v in required.items() if not v]
         if missing:
-            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
-
-    @property
-    def postgres_dsn(self) -> str:
-        return (
-            f"postgresql://{self.sepa_user}:{self.sepa_password}"
-            f"@{self.sepa_host}:{self.sepa_port}/{self.sepa_db}"
-        )
+            raise ValueError(
+                "Missing required environment variables: "
+                f"{', '.join(missing)}"
+            )
 
     @property
     def iceberg_catalog_config(self) -> dict:
