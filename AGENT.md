@@ -4,23 +4,22 @@ This document provides a detailed, technical overview of the SEPA Price Pipeline
 
 ## 1. Project Overview
 
-- **Purpose**: This project is an asynchronous data pipeline that scrapes daily price data from the SEPA (Sistema Electrónico de Publicidad de Precios Argentino) government website. The goal is to ingest this data into a Hybrid Lakehouse (PostgreSQL + MinIO/Iceberg) for analytics.
-- **Core Functionality**: It navigates to a specific URL, extracts dynamic download links, downloads large `.zip` files, validates the data, and loads it into both a transactional database and a data lake.
-- **Key Challenge**: Processing massive daily data dumps (~15M rows/day) reliably and efficiently, handling schema evolution and timezone inconsistencies.
+- **Purpose**: This project is an asynchronous data pipeline that scrapes daily price data from the SEPA (Sistema Electrónico de Publicidad de Precios Argentino) government website. The goal is to ingest this data into a Lakehouse (MinIO/Iceberg + BigQuery BigLake) for analytics.
+- **Core Functionality**: It navigates to a specific URL, extracts dynamic download links, downloads large `.zip` files, materializes them as Bronze Parquet, validates the data, and loads it into the Silver Iceberg layer.
+- **Key Challenge**: Processing massive daily data dumps (~15M rows/day) reliably and efficiently within bounded memory (~1.5 GB peak), handling schema evolution and timezone inconsistencies.
 
 ## 2. Technology Stack
 
 - **Language**: Python 3.12+
-- **Database**: PostgreSQL 16 (via Docker)
 - **Object Storage**: MinIO (S3-compatible) & Google Cloud Storage (GCS)
 - **Table Format**: Apache Iceberg
+- **Catalog**: Project Nessie (REST, ROCKSDB persistence) for local; BigQuery BigLake for cloud
 - **Cloud Query Engine**: Google Cloud BigLake (Serverless Analytics)
 - **Dependency Management**: `uv`
 - **Libraries**:
     - `polars`: High-performance data processing (the engine of the pipeline).
     - `pyiceberg`: Logic for interacting with Iceberg tables.
     - `boto3` / `minio`: S3 interaction.
-    - `psycopg`: PostgreSQL adapter.
     - `httpx` / `beautifulsoup4`: Scraping.
     - `tenacity`: Resilience/Retries.
 
@@ -31,7 +30,7 @@ SEPA-pipeline/
 ├── .env                  # Local environment variables - NOT COMMITTED
 ├── .gitignore
 ├── data/                 # (Output) Local staging for .zip files.
-├── docker-compose.yml    # Infrastructure: Postgres, MinIO, McClient.
+├── docker-compose.yml    # Infrastructure: MinIO, Nessie, McClient.
 ├── logs/                 # (Output) Daily log files.
 ├── sql/
 │   └── init.sql          # DDL: Tables, Views, Partitions.
@@ -41,19 +40,20 @@ SEPA-pipeline/
 │       ├── config.py     # Infrastructure config only (Env vars, Paths, catalog configs).
 │       ├── schema.py     # Silver/Bronze schema contract (schemas, rename maps, transforms).
 │       ├── extractor.py  # ZIP extraction & S3 Fetching logic.
-│       ├── pipeline.py   # Main Orchestrator (CLI Entry Point).
+│       ├── pipeline.py   # Unified orchestrator (scrape + bronze + silver, CLI entry point).
 │       ├── scraper.py    # Web scraping & Raw S3 Upload.
 │       ├── validator.py  # CSV reading, validation, referential integrity.
 │       ├── loaders/
-│       │   ├── base.py
-│       │   ├── iceberg_loader.py
-│       │   ├── postgres_loader.py
-│       │   ├── parquet_loader.py
-│       │   └── bigquery_loader.py # Native BigLake ingestion.
+│       │   ├── base.py           # Abstract base for silver loaders.
+│       │   ├── iceberg_loader.py # Local MinIO/Nessie silver loader.
+│       │   ├── bigquery_loader.py # Native BigLake silver loader.
+│       │   ├── parquet_loader.py  # Bronze parquet materializer (build/read/exists).
+│       │   └── bronze_audit.py    # Bronze audit Iceberg table (sepa.bronze_audit via Nessie).
 │       └── utils/
 │           ├── bootstrap_lakehouse.py  # MinIO Setup & Backfill Utility.
 │           ├── scan_bronze_dates.py    # Historical archive validation utility.
 │           ├── verify_silver.py        # Silver layer health check CLI.
+│           ��── fecha.py                # AR timezone date utility.
 │           └── logger.py
 ├── tests/
 ├── AGENT.md              # This file.
@@ -61,24 +61,19 @@ SEPA-pipeline/
 └── README.md
 ```
 
-## 4. Architecture: The Hybrid Lakehouse
+## 4. Architecture: The Analytical Lakehouse
 
-The project employs a dual-layer architecture to handle scale and distinct workloads:
+The project employs a layered Lakehouse architecture on MinIO/Iceberg (local) and BigQuery BigLake (cloud).
 
-### 4.1. Operational Layer (PostgreSQL)
-- **Role**: Hot Store. Serves real-time/interactive queries for the web frontend.
-- **Schema**:
-    - **Dimensions**: `comercios`, `sucursales`, `productos_master` (Normalized).
-    - **Fact**: `precios` (Partitioned by `fecha_vigencia`).
-- **Optimization**:
-    - **Partitioning**: The `precios` table is partitioned by `RANGE(fecha_vigencia)` (Date). This solves timezone drift issues faced with timestamp partitioning.
-    - **Bulk Loading**: Uses `COPY` for speed. Referential integrity is enforced by the application (`validator.py`) before loading.
+### 4.1. Bronze Layer (MinIO)
+- **Raw**: Original ZIP files at `s3://sepa-lakehouse/bronze/raw/year=YYYY/month=MM/day=DD/`.
+- **Parquet**: Unified parquet files (all child ZIPs merged per table type) at `bronze/parquet/.../comercio.parquet`, `sucursales.parquet`, `productos.parquet`. Written by `ParquetLoader.build()`.
+- **Audit**: `sepa.bronze_audit` Iceberg table via Nessie tracking per-date ingestion metadata (CSV row/column counts, parquet row counts, paths, timestamps).
+- **Purpose**: Raw = immutable archive / disaster recovery. Parquet = fast replay source for silver processing (avoids re-extracting nested ZIPs). Audit = observability.
 
-### 4.2. Analytical Layer (Iceberg Lakehouse)
-- **Role**: Cold Store / Data Lake. Historical analysis and massive aggregations.
-- **Structure**:
-    - **Bronze**: Raw ZIP files stored in MinIO (`s3://sepa-lakehouse/bronze/raw`).
-    - **Silver**: Cleaned data stored as Apache Iceberg tables in GCS (`gs://sepa-lakehouse-silver-74dbadf7/warehouse/silver/iceberg`) and MinIO. Star schema with an explicit Python schema contract (`schema.py`):
+### 4.2. Silver Layer (Iceberg)
+- **Role**: Analytical layer. Historical analysis and massive aggregations.
+- **Structure**: Cleaned data stored as Apache Iceberg tables in MinIO (Nessie catalog) and GCS (BigQuery BigLake). Star schema with an explicit Python schema contract (`schema.py`):
         - **Fact**: `sepa.precios` — ~15M rows/day, partitioned by `Day(fecha_vigencia)`. Carries `descripcion` and `marca` denormalized from source to avoid per-query dim joins in Gold.
         - **Dim**: `sepa.dim_comercios` — unpartitioned, daily snapshot (append-only).
         - **Dim**: `sepa.dim_sucursales` — unpartitioned, daily snapshot. Excludes 7 horario columns (operational, never queried).
@@ -88,7 +83,7 @@ The project employs a dual-layer architecture to handle scale and distinct workl
         - `marca` null → `"S/D"` (standard SEPA placeholder for unknown brand)
         - `provincia = "Buenos Aires"` → `"AR-B"` ISO 3166-2 (some stores file full name)
 - **Catalog Integration**: 
-    - **Local**: Project Nessie REST catalog (backed by PostgreSQL) + MinIO for file storage.
+    - **Local**: Project Nessie REST catalog (ROCKSDB persistence) + MinIO for file storage.
     - **Cloud**: Google Cloud BigLake via PyIceberg's native BigQuery catalog (`bigquery_loader.py`) for serverless analytics.
 - **Health Check**: `uv run python -m sepa_pipeline.utils.verify_silver [--date YYYY-MM-DD] [--catalog nessie|bigquery]` — validates row counts, schema, null audits, partition pruning, and province ISO format for all four Silver tables.
 
@@ -104,15 +99,23 @@ The project employs a dual-layer architecture to handle scale and distinct workl
     uv run python -m sepa_pipeline.utils.setup_bigquery
     ```
 3.  **Run Pipeline**:
-    The pipeline is CLI-driven (`pipeline.py`).
-    - **Run for specific date**:
-      ```bash
-      uv run python -m sepa_pipeline.pipeline --date 2026-01-04
-      ```
-    - **Run specific stages**:
-      ```bash
-      uv run python -m sepa_pipeline.pipeline --date 2026-01-04 --stages postgres
-      ```
+    The pipeline is CLI-driven (`pipeline.py`). Default: scrape + bronze + silver for today, all targets.
+    ```bash
+    # Full pipeline for today (both iceberg + bigquery)
+    uv run python -m sepa_pipeline.pipeline
+
+    # Specific date, iceberg only
+    uv run python -m sepa_pipeline.pipeline --date 2026-04-04 --target iceberg
+
+    # Scrape only (no processing)
+    uv run python -m sepa_pipeline.pipeline --scrape-only --date 2026-04-04
+
+    # Date range, all targets
+    uv run python -m sepa_pipeline.pipeline --date-from 2026-04-01 --date-to 2026-04-04
+
+    # Specific target
+    uv run python -m sepa_pipeline.pipeline --target bigquery --date 2026-04-04
+    ```
 4.  **Run Tests**:
     ```bash
     uv run pytest
@@ -121,13 +124,14 @@ The project employs a dual-layer architecture to handle scale and distinct workl
 ## 6. Key Architectural Decisions
 
 - **Polars for ETL**: Polars is used for all in-memory data transformation due to its speed and memory efficiency compared to Pandas.
-- **Application-Side Integrity**: To enable fast `COPY` inserts, foreign keys are **disabled on the fact table (`precios`)**. `validator.py` enforces referential integrity in-application before loading. Trade-off: Insert speed (+300%) vs database-enforced constraints.
-- **Strict Partitioning**: Database partitions are strictly aligned with the Business Date (`fecha_vigencia`) rather than ingestion time, ensuring determinism.
+- **Application-Side Integrity**: `validator.py` enforces referential integrity in-application before loading. Orphaned sucursales/productos are dropped before they reach the silver layer.
+- **Strict Partitioning**: Iceberg partitions are strictly aligned with the Business Date (`fecha_vigencia`) rather than ingestion time, ensuring determinism.
+- **Batched Silver Loading**: Productos (~11.6M rows/day) are streamed from Bronze Parquet in 500K-row batches to bound memory at ~1.5 GB peak (down from 14 GB eager, 22 GB original).
 - **Majority Vote Consensus Validation**: The scraping payload acts as the primary shield against stale data. It physically inspects the contents of a random sample (`N=20`) of nested store `.zip` files before fetching the final 180MB batch. If the *majority* of sampled files are older than 24h, the package is rejected. This prevents isolated inactive stores from blocking pipeline ingestion while guaranteeing overall partition freshness.
 - **Data Retention Policy**:
-    - **Postgres Hot Store**: 60-90 days (configurable, supports recent price lookups for web frontend)
-    - **Iceberg Cold Store**: Indefinite retention (historical analytics, annual price trends, inflation analysis)
     - **Bronze Raw ZIP**: Indefinite retention (immutable source of truth for disaster recovery)
+    - **Bronze Parquet**: Indefinite retention (fast replay source, one tier above raw)
+    - **Silver Iceberg**: Indefinite retention (historical analytics, annual price trends, inflation analysis)
 
 ## 7. Storage Projections
 
@@ -136,7 +140,7 @@ The project employs a dual-layer architecture to handle scale and distinct workl
 | **Bronze Raw ZIP** | 113 GB | Indefinite | Immutable Archive |
 | **Bronze Parquet** | 39 GB | Indefinite | Fast Replay Source |
 | **Silver Iceberg** | 27 GB | Indefinite | Analytics Ready |
-| **Postgres Hot** | 330 GB | 60-90 Days | Web App Queries (Auto-truncated) |
+| **Bronze Audit** | < 1 MB | Indefinite | Ingestion Observability (Iceberg via Nessie) |
 
 ## 8. Phase 4 - Analytics Layer (SPC-4) -- Gold Layer Complete
 
@@ -200,7 +204,9 @@ A formal Silver schema contract was introduced to fix a data quality root cause:
 | `schema.py` | **New.** Owns all Bronze schemas, Silver schemas, rename maps, and `to_silver_*()` transform functions. |
 | `config.py` | **Updated.** Infrastructure config only. Re-exports `get_schema_dict` for backward compatibility. |
 | `validator.py` | **Updated.** Added `_read_csv()`, `load_dimensions()`, and `load_productos_chunk()`. CSV reading logic moved out of pipeline.py. |
-| `pipeline.py` | **Updated.** Phase 2/3 now call `validator.load_dimensions()` and `validator.load_productos_chunk()`, then apply `to_silver_*()` transforms before every Lakehouse write. |
+| `pipeline.py` | **Rewritten.** Unified orchestrator: scrape → bronze parquet → validate → silver. Reads from bronze parquet, streams productos in 500K-row batches. |
+| `loaders/parquet_loader.py` | **Repurposed.** No longer a BaseLoader subclass. Now a bronze parquet materializer (`build`/`read_dimensions`/`read_productos_batched`/`exists`). |
+| `loaders/bronze_audit.py` | **New.** Writes ingestion metadata to `sepa.bronze_audit` Iceberg table via Nessie. |
 | `utils/verify_silver.py` | **New.** CLI health check for all four Silver Iceberg tables. |
 
 **Key design decisions:**
@@ -209,6 +215,7 @@ A formal Silver schema contract was introduced to fix a data quality root cause:
 - Dims are **unpartitioned** by design — they are daily snapshots (append-only), not point-in-time histories. Filtering by `fecha_vigencia` on unpartitioned tables is cheap at dim scale (<500K rows/day).
 - `precios` (fact) is partitioned by `Day(fecha_vigencia)` — required for scan efficiency at 15M rows/day.
 - `descripcion` and `marca` are denormalized onto `precios` to avoid a 90K-row dim join on every Gold aggregation.
+- **PostgreSQL removed** — the pipeline is purely analytical; Postgres was originally intended for a web frontend that was descoped.
 
 ### Pending: BigQuery Silver Rebuild + dbt Fix
 
