@@ -106,6 +106,7 @@ def process_daily_data(
     logger.info(f"Starting SEPA pipeline for {target_date} | Targets: {targets}")
 
     parquet_loader = ParquetLoader(config)
+    audit_writer = BronzeAuditWriter(config)
 
     # --- Step 1–2: Ensure bronze data exists ---
     has_parquet = parquet_loader.exists(target_date)
@@ -142,7 +143,6 @@ def process_daily_data(
             # Build parquet + audit
             audit_data = parquet_loader.build(all_csv_paths, target_date)
 
-            audit_writer = BronzeAuditWriter(config)
             audit_writer.write(
                 fecha_vigencia=target_date,
                 audit_data=audit_data,
@@ -240,9 +240,21 @@ def process_daily_data(
 
         total_loaded += chunk.height
 
+    drop_stats = validator.get_drop_stats()
+    drop_stats["silver_loaded"] = total_loaded
+
     logger.info(
         f"Pipeline completed for {target_date} | "
-        f"Products: {total_loaded:,} rows"
+        f"Products: {total_loaded:,} rows | "
+        f"Dropped — validation: {drop_stats['validation_dropped']:,}, "
+        f"integrity: {drop_stats['integrity_dropped']:,}, "
+        f"negative_price: {drop_stats['negative_price_count']:,}"
+    )
+
+    audit_writer.write_silver_stats(
+        fecha_vigencia=target_date,
+        drop_stats=drop_stats,
+        parquet_prefix=parquet_loader._parquet_prefix(target_date),
     )
 
 
