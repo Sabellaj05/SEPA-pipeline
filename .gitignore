@@ -156,6 +156,7 @@ data/
 tmp/
 sql/scratchpad.sql
 .secret/
+docs/
 
 # dbt
 dbt/sepa_analytics/target/

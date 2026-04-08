@@ -51,6 +51,23 @@ class SEPAValidator:
         "tienda fisica",
     }
 
+    def __init__(self) -> None:
+        self._drops: dict[str, int] = {
+            "validation_dropped": 0,
+            "integrity_dropped": 0,
+            "negative_price_count": 0,
+            "silver_loaded": 0,
+        }
+
+    def get_drop_stats(self) -> dict[str, int]:
+        """Return accumulated drop counts since last reset."""
+        return dict(self._drops)
+
+    def reset_drop_stats(self) -> None:
+        """Reset all drop counters (call between dates in backfill runs)."""
+        for key in self._drops:
+            self._drops[key] = 0
+
     @staticmethod
     def _read_csv(path: str, schema: dict) -> pl.DataFrame:
         """
@@ -328,8 +345,7 @@ class SEPAValidator:
 
         return df
 
-    @staticmethod
-    def validate_productos(df: pl.DataFrame) -> pl.DataFrame:
+    def validate_productos(self, df: pl.DataFrame) -> pl.DataFrame:
         """Validate productos.csv schema and data (soft validation)."""
         required_cols = list(get_schema_dict("productos").keys())
 
@@ -393,27 +409,27 @@ class SEPAValidator:
             & pl.col("productos_descripcion").is_not_null()
         )
         after = df.height
-        if after < before:
+        dropped = before - after
+        if dropped > 0:
             logger.warning(
-                f"validate_productos: filtered out {before - after}"
+                f"validate_productos: filtered out {dropped}"
                 " rows missing essential fields after soft-cast"
             )
+        self._drops["validation_dropped"] += dropped
 
-        # Filter non-positive prices but keep rows with price <= 0 only
-        #  as logs (they will be excluded from precio load)
-        negatives = df.filter(pl.col("productos_precio_lista") <= 0)
-        neg_count = negatives.height
+        # Count non-positive prices (kept in DF; excluded from precios fact load)
+        neg_count = df.filter(pl.col("productos_precio_lista") <= 0).height
         if neg_count > 0:
             logger.warning(
                 f"validate_productos: {neg_count} rows"
-                " with non-positive price will be filtered for precios load"
-                " (kept in products DF for audit)"
+                " with non-positive price (kept in batch, excluded from precios fact)"
             )
+        self._drops["negative_price_count"] += neg_count
 
         return df
 
-    @staticmethod
     def validate_referential_integrity(
+        self,
         df_comercios: pl.DataFrame,
         df_sucursales: pl.DataFrame,
         df_productos: pl.DataFrame,
@@ -490,11 +506,13 @@ class SEPAValidator:
                     " dropping them to enforce integrity."
                 )
                 # Filter out orphaned productos
+                before_integrity = df_productos.height
                 df_productos = df_productos.join(
                     sucursal_full_keys,
                     on=["id_comercio", "id_bandera", "id_sucursal"],
                     how="semi",
                 )
+                self._drops["integrity_dropped"] += before_integrity - df_productos.height
         else:
             logger.debug("No products/sucursal keys to compare (one side empty)")
 
