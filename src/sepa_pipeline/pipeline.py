@@ -37,6 +37,7 @@ from sepa_pipeline.scraper import SepaScraper
 from sepa_pipeline.utils.fecha import Fecha
 from sepa_pipeline.utils.logger import get_logger
 from sepa_pipeline.validator import SEPAValidator
+from sepa_pipeline.manage_iceberg import IcebergManager
 
 logger = get_logger(__name__)
 
@@ -294,6 +295,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Only scrape and upload to bronze, do not process",
     )
+    parser.add_argument(
+        "--maintain-iceberg",
+        action="store_true",
+        help="Run Iceberg snapshot maintenance at the end of the pipeline",
+    )
 
     return parser.parse_args()
 
@@ -351,3 +357,8 @@ if __name__ == "__main__":
         )
         for target_date in dates:
             process_daily_data(target_date, config, targets)
+
+        if args.maintain_iceberg and "iceberg" in targets:
+            logger.info("Running post-pipeline Iceberg maintenance...")
+            manager = IcebergManager(config)
+            manager.clean_all_tables()
