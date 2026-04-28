@@ -417,13 +417,14 @@ class SEPAValidator:
             )
         self._drops["validation_dropped"] += dropped
 
-        # Count non-positive prices (kept in DF; excluded from precios fact load)
+        # Drop non-positive prices (excluded from precios fact load)
         neg_count = df.filter(pl.col("productos_precio_lista") <= 0).height
         if neg_count > 0:
             logger.warning(
                 f"validate_productos: {neg_count} rows"
-                " with non-positive price (kept in batch, excluded from precios fact)"
+                " with non-positive price (dropped from batch)"
             )
+            df = df.filter(pl.col("productos_precio_lista") > 0)
         self._drops["negative_price_count"] += neg_count
 
         return df
