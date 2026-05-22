@@ -139,7 +139,7 @@ def process_daily_data(
                 )
                 return
 
-            all_csv_paths, malformed_zips_count = extractor.extract_all_zips(raw_zip_dir)
+            all_csv_paths, malformed_zips_count, stale_count, unknown_count = extractor.extract_all_zips(raw_zip_dir, target_date)
 
             # Build parquet + audit
             audit_data = parquet_loader.build(all_csv_paths, target_date)
@@ -150,6 +150,8 @@ def process_daily_data(
                 raw_zip_path=_raw_zip_s3_path(config, target_date),
                 parquet_prefix=parquet_loader._parquet_prefix(target_date),
                 malformed_zips_count=malformed_zips_count,
+                stale_count=stale_count,
+                unknown_count=unknown_count,
             )
 
         except Exception as e:
