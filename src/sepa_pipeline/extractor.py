@@ -6,8 +6,9 @@ import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from sepa_pipeline.utils.logger import get_logger
+import re
 from pyarrow import fs
 from sepa_pipeline.config import SEPAConfig
 
@@ -19,8 +20,8 @@ class SEPAExtractor:
     EXPECTED_FILES = {"comercio.csv", "sucursales.csv", "productos.csv"}
 
     @staticmethod
-    def extract_zip(zip_path: Path, extract_to: Path) -> Dict[str, Path]:
-        """Extract a single ZIP file and return paths to CSVs"""
+    def extract_zip(zip_path: Path, extract_to: Path, target_date: date | None = None) -> Tuple[Dict[str, Path], str]:
+        """Extract a single ZIP file and return paths to CSVs, plus date_status ('valid', 'stale', 'unknown')"""
         logger.info(f"Extracting {zip_path.name}")
 
         csv_paths = {}
@@ -38,10 +39,34 @@ class SEPAExtractor:
                 csv_type = csv_name.replace(".csv", "")
                 csv_paths[csv_type] = extract_dir / csv_name
 
-        return csv_paths
+        # Parse date from comercio.csv
+        date_status = "unknown"
+        comercio_path = csv_paths.get("comercio")
+        if target_date and comercio_path and comercio_path.exists():
+            try:
+                from datetime import datetime, timedelta
+                target_d = target_date
+                
+                with open(comercio_path, "r", encoding="utf-8-sig", errors="replace") as f:
+                    for line in f:
+                        if "ltima actualizaci" in line.lower():
+                            date_match = re.search(r"(\d{4}-\d{2}-\d{2})", line)
+                            if date_match:
+                                extracted_date_str = date_match.group(1)
+                                extracted_d = datetime.strptime(extracted_date_str, "%Y-%m-%d").date()
+                                
+                                if extracted_d < (target_d - timedelta(days=1)):
+                                    date_status = "stale"
+                                else:
+                                    date_status = "valid"
+                            break
+            except Exception as e:
+                logger.warning(f"Failed to check date in {comercio_path}: {e}")
+
+        return csv_paths, date_status
 
     @staticmethod
-    def extract_all_zips(source_dir: Path, target_date: date | None = None) -> List[Dict[str, Path]]:
+    def extract_all_zips(source_dir: Path, target_date: date | None = None) -> Tuple[List[Dict[str, Path]], int, int, int]:
         """
         Extract all ZIP files from a source directory in parallel.
         If target_date is None, source_dir is treated as the directory containing zips.
@@ -70,10 +95,13 @@ class SEPAExtractor:
 
         all_csv_paths = []
         malformed_zips_count = 0
+        stale_count = 0
+        unknown_count = 0
+        
         with ProcessPoolExecutor(max_workers=8) as executor:
             futures = {
                 executor.submit(
-                    SEPAExtractor.extract_zip, zip_path, extract_dir
+                    SEPAExtractor.extract_zip, zip_path, extract_dir, target_date
                 ): zip_path
                 for zip_path in zip_files
             }
@@ -81,14 +109,19 @@ class SEPAExtractor:
             for future in as_completed(futures):
                 zip_path = futures[future]
                 try:
-                    csv_paths = future.result()
+                    csv_paths, date_status = future.result()
                     all_csv_paths.append(csv_paths)
+                    if date_status == "stale":
+                        stale_count += 1
+                    elif date_status == "unknown":
+                        unknown_count += 1
                 except Exception as e:
                     logger.error(f"Failed to extract {zip_path.name} (file may be corrupted): {e}. Skipping this package.")
                     malformed_zips_count += 1
+                    unknown_count += 1
                     continue
 
-        return all_csv_paths, malformed_zips_count
+        return all_csv_paths, malformed_zips_count, stale_count, unknown_count
 
     @staticmethod
     def fetch_from_bronze(target_date: date, config: SEPAConfig) -> Optional[Path]:

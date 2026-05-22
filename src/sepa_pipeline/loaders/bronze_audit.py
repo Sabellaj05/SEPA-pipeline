@@ -31,6 +31,8 @@ BRONZE_AUDIT_SCHEMA = pa.schema(
         pa.field("raw_zip_path", pa.string()),
         pa.field("parquet_path", pa.string()),
         pa.field("malformed_zips_count", pa.int64()),
+        pa.field("stale_count", pa.int64()),
+        pa.field("unknown_count", pa.int64()),
         pa.field("ingested_at", pa.timestamp("us")),
     ]
 )
@@ -108,6 +110,8 @@ class SEPAAuditWriter:
         raw_zip_path: str,
         parquet_prefix: str,
         malformed_zips_count: int = 0,
+        stale_count: int = 0,
+        unknown_count: int = 0,
     ) -> None:
         """
         Append audit rows to sepa.audit_bronze for a single pipeline date.
@@ -131,6 +135,8 @@ class SEPAAuditWriter:
                     "raw_zip_path": raw_zip_path,
                     "parquet_path": f"{parquet_prefix}/{internal_key}.parquet",
                     "malformed_zips_count": malformed_zips_count,
+                    "stale_count": stale_count,
+                    "unknown_count": unknown_count,
                     "ingested_at": now,
                 }
             )
@@ -140,6 +146,8 @@ class SEPAAuditWriter:
             "csv_column_count": pl.Int32,
             "parquet_row_count": pl.Int64,
             "malformed_zips_count": pl.Int64,
+            "stale_count": pl.Int64,
+            "unknown_count": pl.Int64,
         })
         arrow_table = df.to_arrow().cast(BRONZE_AUDIT_SCHEMA)
 
