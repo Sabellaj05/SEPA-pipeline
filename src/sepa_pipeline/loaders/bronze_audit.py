@@ -1,11 +1,11 @@
 """
-Bronze Audit Table — Tracks ingestion metadata in an Iceberg table via Nessie.
+Audit Tables — Tracks ingestion and validation metadata in Iceberg via Nessie.
 
-Records per-date, per-table-type stats (CSV row/column counts, parquet row
-counts, timestamps) so the pipeline has observability over what has been
-ingested into the bronze layer.
+Table: sepa.audit_bronze (unpartitioned, append-only)
+Tracks per-date, per-table-type stats for CSV and Parquet building.
 
-Table: sepa.bronze_audit (unpartitioned, append-only)
+Table: sepa.audit_silver (unpartitioned, append-only)
+Tracks per-date silver validation drop stats and load counts.
 """
 
 from datetime import date, datetime
@@ -21,7 +21,7 @@ from sepa_pipeline.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-AUDIT_SCHEMA = pa.schema(
+BRONZE_AUDIT_SCHEMA = pa.schema(
     [
         pa.field("fecha_vigencia", pa.date32()),
         pa.field("table_type", pa.string()),
@@ -30,22 +30,22 @@ AUDIT_SCHEMA = pa.schema(
         pa.field("parquet_row_count", pa.int64()),
         pa.field("raw_zip_path", pa.string()),
         pa.field("parquet_path", pa.string()),
+        pa.field("malformed_zips_count", pa.int64()),
         pa.field("ingested_at", pa.timestamp("us")),
-        # Silver processing stats — only set for table_type='silver_precios'
+    ]
+)
+
+SILVER_AUDIT_SCHEMA = pa.schema(
+    [
+        pa.field("fecha_vigencia", pa.date32()),
+        pa.field("table_type", pa.string()),
         pa.field("validation_dropped", pa.int64()),
         pa.field("integrity_dropped", pa.int64()),
         pa.field("negative_price_count", pa.int64()),
         pa.field("silver_loaded", pa.int64()),
+        pa.field("ingested_at", pa.timestamp("us")),
     ]
 )
-
-# Columns added in schema v2 — used to evolve existing tables
-_SILVER_STAT_COLUMNS = {
-    "validation_dropped",
-    "integrity_dropped",
-    "negative_price_count",
-    "silver_loaded",
-}
 
 # Maps internal ParquetLoader table keys → audit table_type values
 _BRONZE_TABLE_TYPE_NAMES = {
@@ -55,10 +55,11 @@ _BRONZE_TABLE_TYPE_NAMES = {
 }
 
 
-class BronzeAuditWriter:
-    """Writes ingestion audit rows to the sepa.bronze_audit Iceberg table."""
+class SEPAAuditWriter:
+    """Writes ingestion audit rows to sepa.audit_bronze and sepa.audit_silver."""
 
-    _TABLE_ID = "sepa.bronze_audit"
+    _BRONZE_TABLE_ID = "sepa.audit_bronze"
+    _SILVER_TABLE_ID = "sepa.audit_silver"
 
     def __init__(self, config: SEPAConfig):
         self.config = config
@@ -81,60 +82,39 @@ class BronzeAuditWriter:
                 ):
                     table._io._thread_locals.get_fs_cached.cache_clear()
 
-    def _evolve_schema_if_needed(self, table: object) -> None:
-        """Add silver stat columns to existing tables that predate schema v2."""
-        from pyiceberg.types import LongType
-
-        existing = {field.name for field in table.schema().fields}
-        missing = _SILVER_STAT_COLUMNS - existing
-        if not missing:
-            return
-
-        logger.info(f"[AUDIT] Evolving schema: adding columns {sorted(missing)}")
-        with table.update_schema() as update:
-            for name in sorted(missing):
-                update.add_column(name, LongType())
-
-    def _ensure_table(self) -> object | None:
+    def _ensure_table(self, table_id: str, schema: pa.Schema) -> object | None:
         if not self.catalog:
             return None
 
         try:
-            table = self.catalog.load_table(self._TABLE_ID)
+            table = self.catalog.load_table(table_id)
             self._fix_io_endpoint(table)
-            self._evolve_schema_if_needed(table)
             return table
         except NoSuchTableError:
-            logger.info(f"[AUDIT] Creating {self._TABLE_ID}...")
+            logger.info(f"[AUDIT] Creating {table_id}...")
             try:
                 self.catalog.create_namespace("sepa")
             except NamespaceAlreadyExistsError:
                 pass
 
-            table = self.catalog.create_table(self._TABLE_ID, schema=AUDIT_SCHEMA)
+            table = self.catalog.create_table(table_id, schema=schema)
             self._fix_io_endpoint(table)
             return table
 
-    def write(
+    def write_bronze(
         self,
         fecha_vigencia: date,
         audit_data: Dict[str, Dict],
         raw_zip_path: str,
         parquet_prefix: str,
+        malformed_zips_count: int = 0,
     ) -> None:
         """
-        Append audit rows for a single pipeline date.
-
-        Args:
-            fecha_vigencia: The business date.
-            audit_data: Output from ParquetLoader.build() —
-                        {"comercio": {"csv_rows": N, ...}, ...}
-            raw_zip_path: S3 path to the raw ZIP file.
-            parquet_prefix: S3 prefix for the parquet files.
+        Append audit rows to sepa.audit_bronze for a single pipeline date.
         """
-        table = self._ensure_table()
+        table = self._ensure_table(self._BRONZE_TABLE_ID, BRONZE_AUDIT_SCHEMA)
         if table is None:
-            logger.warning("[AUDIT] Skipping audit write (catalog not available)")
+            logger.warning("[AUDIT] Skipping bronze audit write (catalog not available)")
             return
 
         now = datetime.now()
@@ -150,42 +130,32 @@ class BronzeAuditWriter:
                     "parquet_row_count": stats.get("parquet_rows", 0),
                     "raw_zip_path": raw_zip_path,
                     "parquet_path": f"{parquet_prefix}/{internal_key}.parquet",
+                    "malformed_zips_count": malformed_zips_count,
                     "ingested_at": now,
-                    # Silver stats are null for bronze-layer rows
-                    "validation_dropped": None,
-                    "integrity_dropped": None,
-                    "negative_price_count": None,
-                    "silver_loaded": None,
                 }
             )
 
         df = pl.DataFrame(rows, schema_overrides={
-            "validation_dropped": pl.Int64,
-            "integrity_dropped": pl.Int64,
-            "negative_price_count": pl.Int64,
-            "silver_loaded": pl.Int64,
+            "csv_row_count": pl.Int64,
+            "csv_column_count": pl.Int32,
+            "parquet_row_count": pl.Int64,
+            "malformed_zips_count": pl.Int64,
         })
-        arrow_table = df.to_arrow().cast(AUDIT_SCHEMA)
+        arrow_table = df.to_arrow().cast(BRONZE_AUDIT_SCHEMA)
 
-        logger.info(f"[AUDIT] Writing {len(rows)} audit rows for {fecha_vigencia}")
+        logger.info(f"[AUDIT] Writing {len(rows)} bronze audit rows for {fecha_vigencia}")
         table.append(arrow_table)
-        logger.info("[AUDIT] Audit write complete")
+        logger.info("[AUDIT] Bronze audit write complete")
 
-    def write_silver_stats(
+    def write_silver(
         self,
         fecha_vigencia: date,
         drop_stats: Dict[str, int],
-        parquet_prefix: str,
     ) -> None:
         """
-        Append a single 'silver_precios' audit row with per-drop-reason counts.
-
-        Args:
-            fecha_vigencia: The business date.
-            drop_stats: Output from SEPAValidator.get_drop_stats().
-            parquet_prefix: S3 prefix for the bronze parquet files (for lineage).
+        Append a single 'silver_precios' audit row to sepa.audit_silver.
         """
-        table = self._ensure_table()
+        table = self._ensure_table(self._SILVER_TABLE_ID, SILVER_AUDIT_SCHEMA)
         if table is None:
             logger.warning("[AUDIT] Skipping silver audit write (catalog not available)")
             return
@@ -193,16 +163,11 @@ class BronzeAuditWriter:
         row = {
             "fecha_vigencia": fecha_vigencia,
             "table_type": "silver_precios",
-            "csv_row_count": 0,
-            "csv_column_count": 0,
-            "parquet_row_count": 0,
-            "raw_zip_path": "",
-            "parquet_path": f"{parquet_prefix}/productos.parquet",
-            "ingested_at": datetime.now(),
             "validation_dropped": drop_stats.get("validation_dropped", 0),
             "integrity_dropped": drop_stats.get("integrity_dropped", 0),
             "negative_price_count": drop_stats.get("negative_price_count", 0),
             "silver_loaded": drop_stats.get("silver_loaded", 0),
+            "ingested_at": datetime.now(),
         }
 
         df = pl.DataFrame([row], schema_overrides={
@@ -211,7 +176,7 @@ class BronzeAuditWriter:
             "negative_price_count": pl.Int64,
             "silver_loaded": pl.Int64,
         })
-        arrow_table = df.to_arrow().cast(AUDIT_SCHEMA)
+        arrow_table = df.to_arrow().cast(SILVER_AUDIT_SCHEMA)
 
         logger.info(
             f"[AUDIT] Silver stats for {fecha_vigencia}: "

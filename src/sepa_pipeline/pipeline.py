@@ -23,7 +23,7 @@ import polars as pl
 from sepa_pipeline.config import SEPAConfig
 from sepa_pipeline.extractor import SEPAExtractor
 from sepa_pipeline.loaders.bigquery_loader import BigQueryLoader
-from sepa_pipeline.loaders.bronze_audit import BronzeAuditWriter
+from sepa_pipeline.loaders.bronze_audit import SEPAAuditWriter
 from sepa_pipeline.loaders.iceberg_loader import IcebergLoader
 from sepa_pipeline.loaders.parquet_loader import ParquetLoader
 from sepa_pipeline.schema import (
@@ -107,7 +107,7 @@ def process_daily_data(
     logger.info(f"Starting SEPA pipeline for {target_date} | Targets: {targets}")
 
     parquet_loader = ParquetLoader(config)
-    audit_writer = BronzeAuditWriter(config)
+    audit_writer = SEPAAuditWriter(config)
 
     # --- Step 1–2: Ensure bronze data exists ---
     has_parquet = parquet_loader.exists(target_date)
@@ -139,16 +139,17 @@ def process_daily_data(
                 )
                 return
 
-            all_csv_paths = extractor.extract_all_zips(raw_zip_dir)
+            all_csv_paths, malformed_zips_count = extractor.extract_all_zips(raw_zip_dir)
 
             # Build parquet + audit
             audit_data = parquet_loader.build(all_csv_paths, target_date)
 
-            audit_writer.write(
+            audit_writer.write_bronze(
                 fecha_vigencia=target_date,
                 audit_data=audit_data,
                 raw_zip_path=_raw_zip_s3_path(config, target_date),
                 parquet_prefix=parquet_loader._parquet_prefix(target_date),
+                malformed_zips_count=malformed_zips_count,
             )
 
         except Exception as e:
@@ -252,10 +253,9 @@ def process_daily_data(
         f"negative_price: {drop_stats['negative_price_count']:,}"
     )
 
-    audit_writer.write_silver_stats(
+    audit_writer.write_silver(
         fecha_vigencia=target_date,
         drop_stats=drop_stats,
-        parquet_prefix=parquet_loader._parquet_prefix(target_date),
     )
 
 

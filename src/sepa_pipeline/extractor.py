@@ -69,6 +69,7 @@ class SEPAExtractor:
         extract_dir.mkdir(parents=True, exist_ok=True)
 
         all_csv_paths = []
+        malformed_zips_count = 0
         with ProcessPoolExecutor(max_workers=8) as executor:
             futures = {
                 executor.submit(
@@ -83,10 +84,11 @@ class SEPAExtractor:
                     csv_paths = future.result()
                     all_csv_paths.append(csv_paths)
                 except Exception as e:
-                    logger.error(f"Failed to extract {zip_path.name}: {e}")
-                    raise
+                    logger.error(f"Failed to extract {zip_path.name} (file may be corrupted): {e}. Skipping this package.")
+                    malformed_zips_count += 1
+                    continue
 
-        return all_csv_paths
+        return all_csv_paths, malformed_zips_count
 
     @staticmethod
     def fetch_from_bronze(target_date: date, config: SEPAConfig) -> Optional[Path]:
