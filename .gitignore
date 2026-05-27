@@ -167,3 +167,8 @@ dbt/.user.yml
 
 # duckdb
 **/*.duckdb
+
+# Google ADK local storage
+.adk/
+**/session.db
+
