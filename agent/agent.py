@@ -15,10 +15,14 @@ from google.adk.tools.mcp_tool import (
 )
 
 from agent.prompt import SYSTEM_PROMPT
+from agent.observability import configure_langfuse_tracing
+
+configure_langfuse_tracing()
 
 # Configure paths
 current_dir = os.path.dirname(os.path.abspath(__file__))
-server_path = os.path.join(current_dir, "tools", "mcp", "lakehouse_mcp", "stdio.py")
+repo_root = os.path.dirname(current_dir)
+server_path = os.path.join(repo_root, "mcp", "lakehouse_mcp", "stdio.py")
 
 # system prompt
 SYSTEM_INSTRUCTIONS = SYSTEM_PROMPT
@@ -48,7 +52,7 @@ else:
     connection_params = StdioConnectionParams(
         server_params=StdioServerParameters(
             command="uv",
-            args=["run", "python", "-m", "agent.tools.mcp.lakehouse_mcp.stdio"],
+            args=["run", "python", "-m", "lakehouse_mcp.stdio"],
         )
     )
 
@@ -71,5 +75,6 @@ if __name__ == "__main__":
         print(response.text)
     else:
         print(
-            "SEPA Ops Assistant initialized. Use 'adk run agent/agent.py' or provide a prompt."
+            "SEPA Ops Assistant initialized. "
+            "Use 'adk run agent/agent.py' or provide a prompt."
         )
