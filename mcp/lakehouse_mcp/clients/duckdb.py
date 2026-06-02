@@ -8,6 +8,7 @@ from lakehouse_mcp.config import config
 logger = logging.getLogger(__name__)
 
 db_conn = None
+_REGISTERED_VIEWS: set[str] = set()
 
 
 def init_duckdb():
@@ -54,6 +55,7 @@ def init_duckdb():
                     )
                     """
                 )
+                _REGISTERED_VIEWS.add(table_name)
                 logger.info(f"Registered DuckDB view for {table_name}")
             except Exception as ve:
                 logger.warning(
@@ -71,7 +73,13 @@ def close_duckdb():
     if db_conn:
         db_conn.close()
         db_conn = None
+    _REGISTERED_VIEWS.clear()
 
 
 def get_connection():
     return db_conn
+
+
+def get_registered_views() -> frozenset[str]:
+    """Return the set of view names registered during init_duckdb."""
+    return frozenset(_REGISTERED_VIEWS)
