@@ -111,6 +111,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.langfuse
 .venv
 env/
 venv/
@@ -171,7 +172,7 @@ dbt/.user.yml
 # Google ADK local storage
 .adk/
 **/session.db
+.antigravitycli
 
 # agent specific
 agent/prompt.py
-
