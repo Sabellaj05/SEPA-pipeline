@@ -112,6 +112,7 @@ celerybeat.pid
 # Environments
 .env
 .env.langfuse
+agent/.env.agent
 .venv
 env/
 venv/
