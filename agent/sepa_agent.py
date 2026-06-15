@@ -24,7 +24,6 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-
 from google.adk.agents import Agent
 from google.adk.models import LiteLlm
 from google.adk.runners import Runner
@@ -49,10 +48,11 @@ DEFAULT_SESSION_ID = "local-session-01"
 _HTTP_PORT = 19121
 
 # Toggle via SEPA_AGENT_LOCAL_MODEL=false to force the cloud model.
-LOCAL_ENABLED: bool = (
-    os.getenv("SEPA_AGENT_LOCAL_MODEL", "true").lower()
-    not in {"0", "false", "no"}
-)
+LOCAL_ENABLED: bool = os.getenv("SEPA_AGENT_LOCAL_MODEL", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
 
 SYSTEM_INSTRUCTIONS: str = SYSTEM_PROMPT
 
@@ -114,9 +114,7 @@ def _resolve_connection_params() -> (
         print(
             f"Connecting to running Streamable HTTP MCP server on port {_HTTP_PORT}..."
         )
-        return StreamableHTTPConnectionParams(
-            url=f"http://127.0.0.1:{_HTTP_PORT}/mcp"
-        )
+        return StreamableHTTPConnectionParams(url=f"http://127.0.0.1:{_HTTP_PORT}/mcp")
     print("HTTP server offline. Spawning local MCP server via Stdio...")
     from mcp import StdioServerParameters
 
@@ -156,7 +154,7 @@ def build_runtime(*, local: bool | None = None) -> Runner:
 
     model: LiteLlm | str = (
         LiteLlm(
-            model="openai/Qwen3-4B-Instruct-2507-Q8_0.gguf",
+            model=f"openai/{os.getenv('LOCAL_THINKING_MODEL')}",
             api_base="http://127.0.0.1:8091/v1",
             api_key=os.getenv("LOCAL_LLM_API_KEY", "sk-no-key"),
         )
@@ -171,16 +169,7 @@ def build_runtime(*, local: bool | None = None) -> Runner:
         tools=[audit_tools],
     )
 
-    import asyncio
-
     _session_service = InMemorySessionService()
-    asyncio.run(
-        _session_service.create_session(
-            app_name=APP_NAME,
-            user_id=DEFAULT_USER_ID,
-            session_id=DEFAULT_SESSION_ID,
-        )
-    )
     _runner = Runner(
         agent=root_agent, app_name=APP_NAME, session_service=_session_service
     )
@@ -190,6 +179,21 @@ def build_runtime(*, local: bool | None = None) -> Runner:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+def _run_sync(coro):
+    import asyncio
+    import concurrent.futures
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            return executor.submit(asyncio.run, coro).result()
+    else:
+        return asyncio.run(coro)
 
 
 def run_prompt(
@@ -220,9 +224,17 @@ def run_prompt(
         # Should never happen: build_runtime() always sets _session_service.
         raise RuntimeError("Internal error: session service was not initialized.")
 
-    import asyncio
-    if asyncio.run(svc.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)) is None:
-        asyncio.run(svc.create_session(app_name=APP_NAME, user_id=user_id, session_id=session_id))
+    if (
+        _run_sync(
+            svc.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
+        )
+        is None
+    ):
+        _run_sync(
+            svc.create_session(
+                app_name=APP_NAME, user_id=user_id, session_id=session_id
+            )
+        )
 
     user_msg = types.Content(role="user", parts=[types.Part(text=prompt)])
     final_text = ""
