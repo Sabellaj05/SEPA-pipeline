@@ -171,11 +171,15 @@ def build_runtime(*, local: bool | None = None) -> Runner:
         tools=[audit_tools],
     )
 
+    import asyncio
+
     _session_service = InMemorySessionService()
-    _session_service.create_session(
-        app_name=APP_NAME,
-        user_id=DEFAULT_USER_ID,
-        session_id=DEFAULT_SESSION_ID,
+    asyncio.run(
+        _session_service.create_session(
+            app_name=APP_NAME,
+            user_id=DEFAULT_USER_ID,
+            session_id=DEFAULT_SESSION_ID,
+        )
     )
     _runner = Runner(
         agent=root_agent, app_name=APP_NAME, session_service=_session_service
@@ -216,8 +220,9 @@ def run_prompt(
         # Should never happen: build_runtime() always sets _session_service.
         raise RuntimeError("Internal error: session service was not initialized.")
 
-    if svc.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id) is None:
-        svc.create_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
+    import asyncio
+    if asyncio.run(svc.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)) is None:
+        asyncio.run(svc.create_session(app_name=APP_NAME, user_id=user_id, session_id=session_id))
 
     user_msg = types.Content(role="user", parts=[types.Part(text=prompt)])
     final_text = ""
