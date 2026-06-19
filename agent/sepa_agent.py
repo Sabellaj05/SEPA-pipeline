@@ -155,7 +155,7 @@ def build_runtime(*, local: bool | None = None) -> Runner:
     model: LiteLlm | str = (
         LiteLlm(
             model=f"openai/{os.getenv('LOCAL_THINKING_MODEL')}",
-            api_base="http://127.0.0.1:8091/v1",
+            api_base=os.getenv("LOCAL_ENDPOINT", "http://127.0.0.1:8091/v1"),
             api_key=os.getenv("LOCAL_LLM_API_KEY", "sk-no-key"),
         )
         if use_local
