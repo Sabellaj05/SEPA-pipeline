@@ -24,6 +24,11 @@ dependencies = [
     "dbt-core>=1.9.0",
     "dbt-bigquery>=1.9.0",
     "dbt-duckdb>=1.9.0",
+    "mcp>=1.27.1",
+    "google-adk[extensions]>=2.1.0",
+    "fastmcp>=3.3.1",
+    "langfuse>=4.7.0",
+    "openinference-instrumentation-google-adk>=0.1.15",
 ]
 
 requires-python = ">=3.12,<3.14"
@@ -80,7 +85,10 @@ select = [
 "__init__.py" = ["F401"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["sepa_pipeline"]
+known-first-party = ["agent", "lakehouse_mcp", "sepa_pipeline"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sepa_pipeline", "agent", "mcp/lakehouse_mcp"]
 
 
 [tool.pytest.ini_options]
