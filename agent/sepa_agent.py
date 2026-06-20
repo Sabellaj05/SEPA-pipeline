@@ -21,7 +21,10 @@ ADK web UI / adk run::
 import os
 import socket
 import sys
+from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import Any
+
 
 from dotenv import load_dotenv
 from google.adk.agents import Agent
@@ -181,7 +184,7 @@ def build_runtime(*, local: bool | None = None) -> Runner:
 # ---------------------------------------------------------------------------
 
 
-def _run_sync(coro):
+def _run_sync(coro: Any) -> Any:
     import asyncio
     import concurrent.futures
 
@@ -246,6 +249,103 @@ def run_prompt(
         if event.is_final_response() and event.content and event.content.parts:
             final_text = event.content.parts[0].text or ""
     return final_text
+
+
+async def _ensure_session(
+    user_id: str, session_id: str
+) -> None:
+    """Create the session if it does not already exist (async)."""
+    svc = _session_service
+    if svc is None:
+        raise RuntimeError("Internal error: session service was not initialized.")
+    existing = await svc.get_session(
+        app_name=APP_NAME, user_id=user_id, session_id=session_id
+    )
+    if existing is None:
+        await svc.create_session(
+            app_name=APP_NAME, user_id=user_id, session_id=session_id
+        )
+
+
+def _event_to_dict(event: Any) -> dict[str, Any]:
+    """Convert an ADK Event into a plain dict suitable for SSE serialization."""
+    from google.adk.events.event import Event as _Event
+
+    assert isinstance(event, _Event)
+
+    # Tool calls (function_call parts)
+    func_calls = event.get_function_calls()
+    if func_calls:
+        fc = func_calls[0]
+        return {
+            "type": "tool_call",
+            "content": f"Calling tool: {fc.name}",
+            "tool": fc.name,
+            "args": dict(fc.args) if fc.args else {},
+        }
+
+    # Tool results (function_response parts)
+    func_responses = event.get_function_responses()
+    if func_responses:
+        fr = func_responses[0]
+        # Truncate large tool results to keep SSE payloads manageable.
+        response_str = str(fr.response) if fr.response else ""
+        if len(response_str) > 2000:
+            response_str = response_str[:2000] + "... (truncated)"
+        return {
+            "type": "tool_result",
+            "content": response_str,
+            "tool": fr.name,
+        }
+
+    # Final response
+    if event.is_final_response():
+        text = ""
+        if event.content and event.content.parts:
+            text = event.content.parts[0].text or ""
+        return {"type": "final", "content": text}
+
+    # Intermediate / progress
+    text = ""
+    if event.content and event.content.parts:
+        text = event.content.parts[0].text or ""
+    return {"type": "progress", "content": text or "Agent is thinking..."}
+
+
+async def arun_prompt_stream(
+    prompt: str,
+    *,
+    user_id: str = DEFAULT_USER_ID,
+    session_id: str = DEFAULT_SESSION_ID,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Async generator that yields structured event dicts from the ADK runner.
+
+    Each yielded dict has at minimum ``{"type": ..., "content": ...}`` and
+    matches the ``SSEEvent`` schema defined in ``agent.api.schemas``.
+
+    This is the primary interface used by the FastAPI streaming endpoint.
+    The existing sync ``run_prompt()`` remains available for CLI / testing.
+
+    Args:
+        prompt: The user's natural-language query.
+        user_id: Identifies the caller; used to scope session state.
+        session_id: Identifies the conversation thread within user_id.
+
+    Yields:
+        Dicts representing agent events (progress, tool_call, tool_result,
+        final, or error).
+    """
+    runner = build_runtime()
+    await _ensure_session(user_id, session_id)
+
+    user_msg = types.Content(role="user", parts=[types.Part(text=prompt)])
+
+    async for event in runner.run_async(
+        user_id=user_id,
+        session_id=session_id,
+        new_message=user_msg,
+    ):
+        yield _event_to_dict(event)
 
 
 if __name__ == "__main__":
