@@ -177,3 +177,7 @@ dbt/.user.yml
 
 # agent specific
 agent/prompt.py
+.Rproj.user
+.positai
+
+.zed/

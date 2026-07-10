@@ -29,9 +29,14 @@ dependencies = [
     "fastmcp>=3.3.1",
     "langfuse>=4.7.0",
     "openinference-instrumentation-google-adk>=0.1.15",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
 ]
 
 requires-python = ">=3.12,<3.14"
+
+[project.scripts]
+sepa-api = "agent.api.cli:main"
 
 [dependency-groups]
 dev = [

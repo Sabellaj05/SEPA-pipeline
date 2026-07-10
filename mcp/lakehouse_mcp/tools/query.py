@@ -25,6 +25,23 @@ def _assert_read_only(sql: str) -> None:
         )
 
 
+def _normalize_registered_table_names(sql: str) -> str:
+    """Map Iceberg-style table names to DuckDB's registered in-memory views."""
+    registered = get_registered_views()
+    if not registered:
+        return sql
+
+    normalized = sql
+    for table_name in sorted(registered, key=len, reverse=True):
+        normalized = re.sub(
+            rf"\bsepa\.{re.escape(table_name)}\b",
+            table_name,
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    return normalized
+
+
 def run_query(sql: str, limit: int = 1000) -> List[Dict[str, Any]]:
     """
     Run a read-only SQL SELECT query over the Iceberg tables using DuckDB.
@@ -34,6 +51,7 @@ def run_query(sql: str, limit: int = 1000) -> List[Dict[str, Any]]:
     """
     try:
         _assert_read_only(sql)
+        sql = _normalize_registered_table_names(sql)
 
         conn = get_connection()
         if conn is None:

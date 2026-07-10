@@ -7,7 +7,7 @@ environment variables. Data model definitions live in schema.py.
 
 import os
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 import polars as pl
 from dotenv import load_dotenv
@@ -55,18 +55,17 @@ class SEPAConfig:
         self.gcp_location: str | None = os.getenv("GCP_LOCATION", "US")
 
         required = {
-            "MINIO_ENDPOINT":    self.minio_endpoint,
-            "MINIO_BUCKET":      self.minio_bucket,
+            "MINIO_ENDPOINT": self.minio_endpoint,
+            "MINIO_BUCKET": self.minio_bucket,
         }
         missing = [k for k, v in required.items() if not v]
         if missing:
             raise ValueError(
-                "Missing required environment variables: "
-                f"{', '.join(missing)}"
+                f"Missing required environment variables: {', '.join(missing)}"
             )
 
     @property
-    def iceberg_catalog_config(self) -> dict:
+    def iceberg_catalog_config(self) -> dict[str, Any]:
         """PyIceberg REST Catalog config for Nessie (local MinIO)."""
         endpoint = self.minio_endpoint
         assert endpoint is not None
