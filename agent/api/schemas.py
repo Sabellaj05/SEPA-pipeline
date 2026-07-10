@@ -50,29 +50,25 @@ class SSEEvent(BaseModel):
     content: str = ""
     tool: str | None = None
     args: dict[str, Any] | None = None
+    data: dict[str, Any] | None = None
+
 
 # Smart List feature
-
 class Item(BaseModel):
-    name: str
-    price: float
-    description: str
-    quantity: int
+    name: str = Field(..., min_length=1)
+    price: float = Field(..., ge=0)
+    description: str = Field(default="")
+    quantity: int = Field(..., ge=1)
+
 
 class Stores(BaseModel):
-    name: str
-    items: list[Item]
+    name: str = Field(..., min_length=1)
+    items: list[Item] = Field(..., min_length=1)
+
 
 class ShoppingList(BaseModel):
-    project_name: str = Field()
+    project_name: str = Field(..., min_length=1)
     message: str = Field(..., min_length=1, max_length=4096)
-    total_estimate: float
-    savings: float
-    stores: list[Stores]
-
-class SmartListResponse(BaseModel):
-    """Response returned by the agent for SmartList, combining chat info and the shopping list."""
-    response: str
-    session_id: str
-    user_id: str
-    shopping_list: ShoppingList
+    total_estimate: float = Field(..., ge=0)
+    savings: float = Field(default=0, ge=0)
+    stores: list[Stores] = Field(..., min_length=1)

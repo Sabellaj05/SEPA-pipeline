@@ -18,16 +18,18 @@ ADK web UI / adk run::
 
 """
 
+import json
 import os
+import re
 import socket
 import sys
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
-
 from dotenv import load_dotenv
-from google.adk.agents import Agent
+from google.adk.agents import Agent, SequentialAgent
+from google.adk.agents.base_agent import BaseAgent
 from google.adk.models import LiteLlm
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
@@ -37,18 +39,23 @@ from google.adk.tools.mcp_tool import (
     StreamableHTTPConnectionParams,
 )
 from google.genai import types
+from pydantic import ValidationError
 
+from agent.api.schemas import ShoppingList
 from agent.observability import configure_langfuse_tracing
-from agent.prompt import SYSTEM_PROMPT
+from agent.shopping_prompts import SHOPPING_FORMATTER_PROMPT, SHOPPING_RESEARCH_PROMPT
 
 # ---------------------------------------------------------------------------
 # Constants — safe at module level (no I/O)
 # ---------------------------------------------------------------------------
 
+
 APP_NAME = "sepa-agent"
 DEFAULT_USER_ID = "local-user"
 DEFAULT_SESSION_ID = "local-session-01"
 _HTTP_PORT = 19121
+RESEARCH_AGENT_NAME = "sepa_shopping_researcher"
+FORMATTER_AGENT_NAME = "sepa_shopping_formatter"
 
 # Toggle via SEPA_AGENT_LOCAL_MODEL=false to force the cloud model.
 LOCAL_ENABLED: bool = os.getenv("SEPA_AGENT_LOCAL_MODEL", "true").lower() not in {
@@ -57,7 +64,7 @@ LOCAL_ENABLED: bool = os.getenv("SEPA_AGENT_LOCAL_MODEL", "true").lower() not in
     "no",
 }
 
-SYSTEM_INSTRUCTIONS: str = SYSTEM_PROMPT
+SYSTEM_INSTRUCTIONS: str = SHOPPING_RESEARCH_PROMPT
 
 # ---------------------------------------------------------------------------
 # Lazily-initialized runtime state
@@ -66,7 +73,7 @@ SYSTEM_INSTRUCTIONS: str = SYSTEM_PROMPT
 # and readers should treat them as Optional; call build_runtime() (or
 # run_prompt, which calls it internally) before accessing them.
 
-root_agent: Agent | None = None
+root_agent: BaseAgent | None = None
 _session_service: InMemorySessionService | None = None
 _runner: Runner | None = None
 
@@ -165,11 +172,25 @@ def build_runtime(*, local: bool | None = None) -> Runner:
         else "gemini-2.5-flash"
     )
 
-    root_agent = Agent(
-        name="sepa_ops_assistant",
+    research_agent = Agent(
+        name=RESEARCH_AGENT_NAME,
         model=model,
-        instruction=SYSTEM_INSTRUCTIONS,
+        instruction=SHOPPING_RESEARCH_PROMPT,
         tools=[audit_tools],
+        output_key="shopping_research",
+    )
+    formatter_agent = Agent(
+        name=FORMATTER_AGENT_NAME,
+        model="gemini-2.5-flash",
+        # model=model,
+        instruction=SHOPPING_FORMATTER_PROMPT,
+        output_schema=ShoppingList,
+        output_key="shopping_list",
+    )
+
+    root_agent = SequentialAgent(
+        name="sepa_shopping_assistant",
+        sub_agents=[research_agent, formatter_agent],
     )
 
     _session_service = InMemorySessionService()
@@ -251,9 +272,7 @@ def run_prompt(
     return final_text
 
 
-async def _ensure_session(
-    user_id: str, session_id: str
-) -> None:
+async def _ensure_session(user_id: str, session_id: str) -> None:
     """Create the session if it does not already exist (async)."""
     svc = _session_service
     if svc is None:
@@ -265,6 +284,42 @@ async def _ensure_session(
         await svc.create_session(
             app_name=APP_NAME, user_id=user_id, session_id=session_id
         )
+
+
+_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+
+
+def _extract_json_payload(text: str) -> str:
+    """Extract a JSON object from a raw LLM response."""
+    block_match = _JSON_BLOCK_RE.search(text)
+    if block_match:
+        return block_match.group(1).strip()
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return text[start : end + 1]
+
+    return text.strip()
+
+
+def _validated_final_event(text: str) -> dict[str, Any]:
+    """Validate and normalize the final shopping-list response."""
+    try:
+        payload = _extract_json_payload(text)
+        shopping_list = ShoppingList.model_validate_json(payload)
+    except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+        return {
+            "type": "error",
+            "content": f"Agent returned invalid ShoppingList JSON: {exc}",
+        }
+
+    data = shopping_list.model_dump(mode="json")
+    return {
+        "type": "final",
+        "content": shopping_list.model_dump_json(),
+        "data": data,
+    }
 
 
 def _event_to_dict(event: Any) -> dict[str, Any]:
@@ -303,7 +358,12 @@ def _event_to_dict(event: Any) -> dict[str, Any]:
         text = ""
         if event.content and event.content.parts:
             text = event.content.parts[0].text or ""
-        return {"type": "final", "content": text}
+        if event.author != FORMATTER_AGENT_NAME:
+            return {
+                "type": "progress",
+                "content": "Research complete. Structuring response...",
+            }
+        return _validated_final_event(text)
 
     # Intermediate / progress
     text = ""
@@ -333,7 +393,7 @@ async def arun_prompt_stream(
 
     Yields:
         Dicts representing agent events (progress, tool_call, tool_result,
-        final, or error).
+        final, or error)
     """
     runner = build_runtime()
     await _ensure_session(user_id, session_id)
@@ -345,7 +405,10 @@ async def arun_prompt_stream(
         session_id=session_id,
         new_message=user_msg,
     ):
-        yield _event_to_dict(event)
+        event_dict = _event_to_dict(event)
+        if event_dict["type"] == "final":
+            yield {"type": "progress", "content": "Structuring response..."}
+        yield event_dict
 
 
 if __name__ == "__main__":
