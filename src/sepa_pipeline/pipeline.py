@@ -49,6 +49,7 @@ SCRAPER_DATA_DIR = "data"
 # Scraping
 # ---------------------------------------------------------------------------
 
+
 async def _scrape_date(target_date: date) -> bool:
     """Run the scraper for a single date. Returns True on success."""
     logger.info(f"Scraping data for {target_date}")
@@ -91,10 +92,12 @@ def _raw_zip_exists(config: SEPAConfig, target_date: date) -> bool:
 # Daily processing
 # ---------------------------------------------------------------------------
 
+
 def process_daily_data(
     target_date: date,
     config: SEPAConfig,
     targets: list[str],
+    force_rebuild_bronze: bool = False,
 ) -> None:
     """
     Full pipeline for one date:
@@ -103,6 +106,9 @@ def process_daily_data(
       3. Build bronze parquet (if not cached) + write audit
       4. Read from bronze parquet, validate, transform to silver
       5. Load to targets (iceberg, bigquery)
+
+    When ``force_rebuild_bronze`` is True, ignore the parquet cache and
+    re-extract / rebuild from the raw ZIP (scraping only if raw is missing).
     """
     logger.info(f"Starting SEPA pipeline for {target_date} | Targets: {targets}")
 
@@ -110,12 +116,17 @@ def process_daily_data(
     audit_writer = SEPAAuditWriter(config)
 
     # --- Step 1–2: Ensure bronze data exists ---
-    has_parquet = parquet_loader.exists(target_date)
+    has_parquet = parquet_loader.exists(target_date) and not force_rebuild_bronze
+
+    if force_rebuild_bronze:
+        logger.info(
+            f"[BRONZE] Force rebuild requested for {target_date} "
+            "(ignoring parquet cache)"
+        )
 
     if has_parquet:
         logger.info(
-            f"[BRONZE] Parquet cache hit for {target_date}, "
-            "skipping extraction"
+            f"[BRONZE] Parquet cache hit for {target_date}, skipping extraction"
         )
     else:
         # Need raw ZIP → check if it exists, scrape if not
@@ -139,7 +150,12 @@ def process_daily_data(
                 )
                 return
 
-            all_csv_paths, malformed_zips_count, stale_count, unknown_count = extractor.extract_all_zips(raw_zip_dir, target_date)
+            (
+                all_csv_paths,
+                malformed_zips_count,
+                stale_count,
+                unknown_count,
+            ) = extractor.extract_all_zips(raw_zip_dir, target_date)
 
             # Build parquet + audit
             audit_data = parquet_loader.build(all_csv_paths, target_date)
@@ -199,16 +215,10 @@ def process_daily_data(
         bigquery_loader.setup(target_date)
 
     if iceberg_loader:
-        iceberg_loader.load_comercios(
-            to_silver_comercios(df_comercios), target_date
-        )
-        iceberg_loader.load_sucursales(
-            to_silver_sucursales(df_sucursales), target_date
-        )
+        iceberg_loader.load_comercios(to_silver_comercios(df_comercios), target_date)
+        iceberg_loader.load_sucursales(to_silver_sucursales(df_sucursales), target_date)
     if bigquery_loader:
-        bigquery_loader.load_comercios(
-            to_silver_comercios(df_comercios), target_date
-        )
+        bigquery_loader.load_comercios(to_silver_comercios(df_comercios), target_date)
         bigquery_loader.load_sucursales(
             to_silver_sucursales(df_sucursales), target_date
         )
@@ -217,12 +227,8 @@ def process_daily_data(
     logger.info("Processing productos in batches")
     total_loaded = 0
 
-    for idx, chunk in enumerate(
-        parquet_loader.read_productos_batched(target_date)
-    ):
-        logger.info(
-            f"Processing batch {idx + 1}: {chunk.height:,} rows"
-        )
+    for idx, chunk in enumerate(parquet_loader.read_productos_batched(target_date)):
+        logger.info(f"Processing batch {idx + 1}: {chunk.height:,} rows")
 
         chunk = validator.validate_productos(chunk)
         _, chunk = validator.validate_referential_integrity(
@@ -265,6 +271,7 @@ def process_daily_data(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="SEPA Pipeline Runner")
 
@@ -302,6 +309,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run Iceberg snapshot maintenance at the end of the pipeline",
     )
+    parser.add_argument(
+        "--force-rebuild-bronze",
+        action="store_true",
+        help=(
+            "Ignore bronze parquet cache and rebuild from raw ZIP "
+            "(re-scrape only if raw ZIP is missing)"
+        ),
+    )
 
     return parser.parse_args()
 
@@ -326,8 +341,7 @@ def _resolve_dates(args: argparse.Namespace) -> list[date]:
             logger.error("--date-from must be earlier than or equal to --date-to.")
             sys.exit(1)
         return [
-            date_from + timedelta(days=i)
-            for i in range((date_to - date_from).days + 1)
+            date_from + timedelta(days=i) for i in range((date_to - date_from).days + 1)
         ]
     elif args.date:
         return [_parse_date(args.date)]
@@ -343,8 +357,7 @@ if __name__ == "__main__":
 
     if args.scrape_only:
         logger.info(
-            f"Scrape-only mode | Dates: {dates[0]} to {dates[-1]} "
-            f"({len(dates)} day(s))"
+            f"Scrape-only mode | Dates: {dates[0]} to {dates[-1]} ({len(dates)} day(s))"
         )
         for target_date in dates:
             success = asyncio.run(_scrape_date(target_date))
@@ -358,7 +371,12 @@ if __name__ == "__main__":
             f"({len(dates)} day(s)) | Targets: {targets}"
         )
         for target_date in dates:
-            process_daily_data(target_date, config, targets)
+            process_daily_data(
+                target_date,
+                config,
+                targets,
+                force_rebuild_bronze=args.force_rebuild_bronze,
+            )
 
         if args.maintain_iceberg and "iceberg" in targets:
             logger.info("Running post-pipeline Iceberg maintenance...")
