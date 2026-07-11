@@ -5,13 +5,19 @@ Reads all child ZIP CSVs (comercio, sucursales, productos) extracted from the
 daily master ZIP, concatenates each table type, and writes a single Parquet
 file per table per date to bronze/parquet/.
 
+Writes are staged under ``.staging/`` and committed only when all three tables
+succeed, then a ``_SUCCESS`` marker is written. ``exists()`` requires the
+marker plus all three files so incomplete days are never treated as cache hits.
+
 Also provides read access so the silver pipeline can skip ZIP extraction
 on subsequent runs.
 """
 
+from __future__ import annotations
+
 from datetime import date
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import polars as pl
 import pyarrow.parquet as pq
@@ -24,6 +30,10 @@ from sepa_pipeline.utils.logger import get_logger
 logger = get_logger(__name__)
 
 TABLE_TYPES = ("comercio", "sucursales", "productos")
+STAGING_DIR = ".staging"
+SUCCESS_MARKER = "_SUCCESS"
+# Chunk size for staging → final stream copy (avoids pyarrow copy_file quirks).
+_COPY_CHUNK_BYTES = 8 * 1024 * 1024
 
 
 class ParquetLoader:
@@ -32,9 +42,14 @@ class ParquetLoader:
     and provides read access for downstream silver processing.
     """
 
-    def __init__(self, config: SEPAConfig):
+    def __init__(
+        self,
+        config: SEPAConfig,
+        filesystem: fs.FileSystem | None = None,
+    ):
         self.config = config
-        self._s3 = fs.S3FileSystem(
+        # Injected filesystem is used in tests (LocalFileSystem / SubTreeFileSystem).
+        self._s3: fs.FileSystem = filesystem or fs.S3FileSystem(
             endpoint_override=config.minio_endpoint,
             access_key=config.minio_access_key,
             secret_key=config.minio_secret_key,
@@ -53,14 +68,93 @@ class ParquetLoader:
     def _parquet_path(self, fecha_vigencia: date, table_type: str) -> str:
         return f"{self._parquet_prefix(fecha_vigencia)}/{table_type}.parquet"
 
-    def exists(self, fecha_vigencia: date) -> bool:
-        """Check if all three bronze parquet files exist for a given date."""
+    def _staging_prefix(self, fecha_vigencia: date) -> str:
+        return f"{self._parquet_prefix(fecha_vigencia)}/{STAGING_DIR}"
+
+    def _staging_path(self, fecha_vigencia: date, table_type: str) -> str:
+        return f"{self._staging_prefix(fecha_vigencia)}/{table_type}.parquet"
+
+    def _success_path(self, fecha_vigencia: date) -> str:
+        return f"{self._parquet_prefix(fecha_vigencia)}/{SUCCESS_MARKER}"
+
+    def _file_exists(self, path: str) -> bool:
+        info = self._s3.get_file_info(path)
+        return bool(info.type != fs.FileType.NotFound)
+
+    def _delete_if_exists(self, path: str) -> None:
+        if self._file_exists(path):
+            self._s3.delete_file(path)
+
+    def _ensure_parent(self, path: str) -> None:
+        """Create parent directories when the backend requires them (local FS)."""
+        parent, sep, _ = path.rpartition("/")
+        if sep and parent:
+            self._s3.create_dir(parent, recursive=True)
+
+    def _open_output(self, path: str) -> Any:
+        """Open an output stream, ensuring parent dirs exist for local FS."""
+        self._ensure_parent(path)
+        return self._s3.open_output_stream(path)
+
+    def _copy_object(self, src: str, dst: str) -> None:
+        """Stream-copy one object (works on S3 and LocalFileSystem)."""
+        with self._s3.open_input_stream(src) as inp:
+            with self._open_output(dst) as out:
+                while True:
+                    chunk = inp.read(_COPY_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+
+    def _cleanup_staging(self, fecha_vigencia: date) -> None:
         for table_type in TABLE_TYPES:
-            path = self._parquet_path(fecha_vigencia, table_type)
-            info = self._s3.get_file_info(path)
-            if info.type == fs.FileType.NotFound:
+            self._delete_if_exists(self._staging_path(fecha_vigencia, table_type))
+
+    def exists(self, fecha_vigencia: date) -> bool:
+        """
+        Return True only for a fully committed bronze day.
+
+        Requires ``_SUCCESS`` plus all three parquet files so partial writes
+        and mid-commit rebuilds are never treated as cache hits.
+        """
+        if not self._file_exists(self._success_path(fecha_vigencia)):
+            return False
+        for table_type in TABLE_TYPES:
+            if not self._file_exists(self._parquet_path(fecha_vigencia, table_type)):
                 return False
         return True
+
+    def _commit_day(self, fecha_vigencia: date) -> None:
+        """
+        Promote staged files to final paths and write ``_SUCCESS``.
+
+        ``_SUCCESS`` is removed first so a mid-commit failure cannot leave a
+        cache hit with mixed old/new tables.
+        """
+        for table_type in TABLE_TYPES:
+            staging = self._staging_path(fecha_vigencia, table_type)
+            if not self._file_exists(staging):
+                raise RuntimeError(
+                    f"Cannot commit bronze day {fecha_vigencia}: "
+                    f"missing staged {table_type}.parquet"
+                )
+
+        # Invalidate cache for the duration of the commit.
+        self._delete_if_exists(self._success_path(fecha_vigencia))
+
+        for table_type in TABLE_TYPES:
+            staging = self._staging_path(fecha_vigencia, table_type)
+            final = self._parquet_path(fecha_vigencia, table_type)
+            self._copy_object(staging, final)
+            logger.info(f"[BRONZE] Committed {table_type}.parquet -> s3://{final}")
+
+        with self._open_output(self._success_path(fecha_vigencia)) as out:
+            out.write(b"")
+
+        self._cleanup_staging(fecha_vigencia)
+        logger.info(
+            f"[BRONZE] Day {fecha_vigencia} committed ({SUCCESS_MARKER} written)"
+        )
 
     def build(
         self,
@@ -69,6 +163,10 @@ class ParquetLoader:
     ) -> Dict[str, Dict]:
         """
         Read all extracted CSVs, concatenate by table type, write Parquet to MinIO.
+
+        Files are written under ``.staging/`` first. Only when all three tables
+        stage successfully are they promoted to the day prefix and ``_SUCCESS``
+        written. On partial failure, any prior committed day is left intact.
 
         Returns audit metadata per table type:
             {
@@ -82,75 +180,98 @@ class ParquetLoader:
             f"from {len(all_csv_paths)} child ZIPs"
         )
 
+        # Drop leftovers from a previous failed attempt before staging again.
+        self._cleanup_staging(fecha_vigencia)
+
         audit: Dict[str, Dict] = {}
+        staged: list[str] = []
 
-        for table_type in TABLE_TYPES:
-            schema = get_schema_dict(table_type)
+        try:
+            for table_type in TABLE_TYPES:
+                schema = get_schema_dict(table_type)
 
-            frames: list[pl.DataFrame] = []
-            total_csv_rows = 0
-            csv_cols = 0
+                frames: list[pl.DataFrame] = []
+                total_csv_rows = 0
+                csv_cols = 0
 
-            for csv_paths in all_csv_paths:
-                if table_type not in csv_paths:
-                    continue
-                try:
-                    df = pl.read_csv(
-                        csv_paths[table_type],
-                        separator="|",
-                        encoding="utf8-lossy",
-                        has_header=True,
-                        null_values=["", "NULL", "null"],
-                        schema_overrides=schema,
-                        truncate_ragged_lines=True,
-                        ignore_errors=True,
-                        quote_char=None,
-                    )
-                    df = df.rename(
-                        {col: col.lstrip("\ufeff").strip() for col in df.columns}
-                    )
-                    total_csv_rows += df.height
-                    csv_cols = len(df.columns)
-                    frames.append(df)
-                except Exception as e:
+                for csv_paths in all_csv_paths:
+                    if table_type not in csv_paths:
+                        continue
+                    try:
+                        df = pl.read_csv(
+                            csv_paths[table_type],
+                            separator="|",
+                            encoding="utf8-lossy",
+                            has_header=True,
+                            null_values=["", "NULL", "null"],
+                            schema_overrides=schema,
+                            truncate_ragged_lines=True,
+                            ignore_errors=True,
+                            quote_char=None,
+                        )
+                        df = df.rename(
+                            {col: col.lstrip("\ufeff").strip() for col in df.columns}
+                        )
+                        total_csv_rows += df.height
+                        csv_cols = len(df.columns)
+                        frames.append(df)
+                    except Exception as e:
+                        logger.warning(
+                            f"[BRONZE] Failed to read {csv_paths[table_type]}: {e}"
+                        )
+
+                if not frames:
                     logger.warning(
-                        f"[BRONZE] Failed to read {csv_paths[table_type]}: {e}"
+                        f"[BRONZE] No data for {table_type}, skipping parquet write"
                     )
+                    audit[table_type] = {
+                        "csv_rows": 0,
+                        "csv_cols": 0,
+                        "parquet_rows": 0,
+                    }
+                    continue
 
-            if not frames:
-                logger.warning(
-                    f"[BRONZE] No data for {table_type}, skipping parquet write"
+                df_concat = pl.concat(frames)
+                staging_path = self._staging_path(fecha_vigencia, table_type)
+
+                logger.info(
+                    f"[BRONZE] Staging {table_type}.parquet: "
+                    f"{df_concat.height:,} rows -> s3://{staging_path}"
                 )
+
+                with self._open_output(staging_path) as out:
+                    pq.write_table(df_concat.to_arrow(), out, compression="zstd")
+
                 audit[table_type] = {
-                    "csv_rows": 0,
-                    "csv_cols": 0,
-                    "parquet_rows": 0,
+                    "csv_rows": total_csv_rows,
+                    "csv_cols": csv_cols,
+                    "parquet_rows": df_concat.height,
                 }
-                continue
+                staged.append(table_type)
 
-            df_concat = pl.concat(frames)
-            parquet_path = self._parquet_path(fecha_vigencia, table_type)
-
-            logger.info(
-                f"[BRONZE] Writing {table_type}.parquet: "
-                f"{df_concat.height:,} rows -> s3://{parquet_path}"
+            if set(staged) == set(TABLE_TYPES):
+                self._commit_day(fecha_vigencia)
+            else:
+                missing = [t for t in TABLE_TYPES if t not in staged]
+                logger.warning(
+                    f"[BRONZE] Incomplete day {fecha_vigencia}: "
+                    f"missing {missing}; not committing "
+                    f"(prior committed day left intact if any)"
+                )
+                self._cleanup_staging(fecha_vigencia)
+        except Exception:
+            # Leave final paths + _SUCCESS untouched; drop partial staging.
+            logger.error(
+                f"[BRONZE] Build failed for {fecha_vigencia}; "
+                "cleaning staging, prior committed day preserved"
             )
-
-            with self._s3.open_output_stream(parquet_path) as out:
-                pq.write_table(df_concat.to_arrow(), out, compression="zstd")
-
-            audit[table_type] = {
-                "csv_rows": total_csv_rows,
-                "csv_cols": csv_cols,
-                "parquet_rows": df_concat.height,
-            }
+            self._cleanup_staging(fecha_vigencia)
+            raise
 
         logger.info(f"[BRONZE] Parquet build complete for {fecha_vigencia}")
         return audit
 
-    def read_dimensions(
-        self, fecha_vigencia: date
-    ) -> Dict[str, pl.DataFrame]:
+    def read_dimensions(self, fecha_vigencia: date) -> Dict[str, pl.DataFrame]:
         """
         Read the small dimension tables (comercio, sucursales) eagerly.
 
