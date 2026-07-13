@@ -79,6 +79,39 @@ def test_exists_false_when_empty(loader: ParquetLoader) -> None:
     assert loader.exists(FECHA) is False
 
 
+def _multi_child_csv_paths(tmp_path: Path) -> list[dict[str, Path]]:
+    """Two child ZIPs so streamed write covers multi-batch ParquetWriter path."""
+    paths = _sample_csv_paths(tmp_path)
+    base = tmp_path / "extract" / "child2"
+    comercio = base / "comercio.csv"
+    sucursales = base / "sucursales.csv"
+    productos = base / "productos.csv"
+    _write_csv(
+        comercio,
+        "id_comercio|comercio_cuit|comercio_razon_social",
+        "2|20999888777|Other SA",
+    )
+    _write_csv(
+        sucursales,
+        "id_comercio|id_bandera|id_sucursal|sucursales_nombre",
+        "2|1|20|Sucursal Norte",
+    )
+    _write_csv(
+        productos,
+        "id_comercio|id_bandera|id_sucursal|id_producto|productos_ean|"
+        "productos_descripcion|productos_precio_lista",
+        "2|1|20|SKU9|7790009|Yerba|2100.00",
+    )
+    paths.append(
+        {
+            "comercio": comercio,
+            "sucursales": sucursales,
+            "productos": productos,
+        }
+    )
+    return paths
+
+
 def test_build_commits_and_exists(
     loader: ParquetLoader,
     local_fs: fs.SubTreeFileSystem,
@@ -104,6 +137,23 @@ def test_build_commits_and_exists(
 
     productos = list(loader.read_productos_batched(FECHA, batch_size=1))
     assert sum(df.height for df in productos) == 2
+
+
+def test_streamed_build_merges_multiple_child_zips(
+    loader: ParquetLoader,
+    tmp_path: Path,
+) -> None:
+    """Streaming writer still produces one unified parquet per table."""
+    audit = loader.build(_multi_child_csv_paths(tmp_path), FECHA)
+
+    assert loader.exists(FECHA) is True
+    assert audit["comercio"]["parquet_rows"] == 2
+    assert audit["sucursales"]["parquet_rows"] == 2
+    assert audit["productos"]["parquet_rows"] == 3
+
+    dims = loader.read_dimensions(FECHA)
+    assert dims["comercio"].height == 2
+    assert sum(df.height for df in loader.read_productos_batched(FECHA)) == 3
 
 
 def test_exists_requires_success_marker(

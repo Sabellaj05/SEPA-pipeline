@@ -15,6 +15,7 @@ logger = get_logger(__name__)
 # S3_ENDPOINT key as used by PyIceberg's FsspecFileIO
 _S3_ENDPOINT_KEY = "s3.endpoint"
 
+
 class IcebergLoader(BaseLoader):
     """
     Loader for Apache Iceberg tables stored in S3/MinIO using PyIceberg.
@@ -93,8 +94,11 @@ class IcebergLoader(BaseLoader):
         for dim_table in ["dim_comercios", "dim_sucursales", "dim_productos"]:
             self._cleanup_dimension_table(dim_table, fecha_vigencia)
 
-        # Clear seen products for the new load
+        # Clear seen products and any leftover precios buffer for the new load
         self._seen_productos.clear()
+        self._precios_buffer.clear()
+        self._precios_buffer_rows = 0
+        self._productos_buffer.clear()
 
     def _cleanup_dimension_table(self, table_name: str, fecha_vigencia: date) -> None:
         if not self.catalog:
@@ -116,15 +120,21 @@ class IcebergLoader(BaseLoader):
             return
 
         if not self.catalog:
-            logger.error("[ICEBERG] Iceberg catalog not initialized, cannot create table")
+            logger.error(
+                "[ICEBERG] Iceberg catalog not initialized, cannot create table"
+            )
             return
 
         try:
             self._iceberg_table = self.catalog.load_table(self._table_identifier)
             self._fix_io_endpoint(self._iceberg_table)
-            logger.info(f"[ICEBERG] Loaded existing Iceberg table: {self._table_identifier}")
+            logger.info(
+                f"[ICEBERG] Loaded existing Iceberg table: {self._table_identifier}"
+            )
         except NoSuchTableError:
-            logger.info(f"[ICEBERG] Iceberg table {self._table_identifier} not found, creating from schema...")
+            logger.info(
+                f"[ICEBERG] Iceberg table {self._table_identifier} not found, creating from schema..."
+            )
 
             arrow_table = df.to_arrow()
 
@@ -140,7 +150,9 @@ class IcebergLoader(BaseLoader):
                 schema=arrow_table.schema,
             )
             self._fix_io_endpoint(self._iceberg_table)
-            logger.info(f"[ICEBERG] Created base Iceberg table: {self._table_identifier}")
+            logger.info(
+                f"[ICEBERG] Created base Iceberg table: {self._table_identifier}"
+            )
 
             # 2. Update Partition Spec: Day(fecha_vigencia)
             try:
@@ -154,55 +166,86 @@ class IcebergLoader(BaseLoader):
             except Exception as e:
                 logger.error(f"[ICEBERG] Failed to set partition spec: {e}")
 
-    def load(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
-        """
-        Append a chunk of data into the Iceberg table.
-        """
-        self.log_start(fecha_vigencia)
-
-        if not self.catalog:
-            logger.warning("[ICEBERG] Skipping Iceberg append (catalog not initialized)")
-            return
-
-        # Use the scraped_at defined in the dataframe if it's there, otherwise datetime.now()
-        # Ensure it is naive (without timezone) as the Iceberg schema was created assuming naive timestamps
-        if "scraped_at" not in df.columns:
-            scraped_at_naive = datetime.now()
-        else:
-            # Grab the first element and parse it, or let polars handle timezone stripping
-            # Typically pipeline.py will pass a timestamptz that might need to be naive.
-            # Easiest way in polars: cast to Datetime without timezone
-            # But normally we just inject it if missing, or strip it if present.
-            pass
-
-        # Ensure fecha_vigencia and scraped_at are present
+    def _prepare_precios_df(
+        self, df: pl.DataFrame, fecha_vigencia: date
+    ) -> pl.DataFrame:
+        """Inject fecha_vigencia / scraped_at so append schema is stable."""
         cols_to_add = []
         if "scraped_at" not in df.columns:
-             cols_to_add.append(pl.lit(datetime.now()).alias("scraped_at"))
+            cols_to_add.append(pl.lit(datetime.now()).alias("scraped_at"))
         else:
-             # strip timezone from existing column just in case to match legacy behavior
-             cols_to_add.append(pl.col("scraped_at").dt.replace_time_zone(None).alias("scraped_at"))
+            # Strip timezone to match legacy Iceberg schema (naive timestamps).
+            cols_to_add.append(
+                pl.col("scraped_at").dt.replace_time_zone(None).alias("scraped_at")
+            )
 
         if "fecha_vigencia" not in df.columns:
-             cols_to_add.append(pl.lit(fecha_vigencia).alias("fecha_vigencia"))
+            cols_to_add.append(pl.lit(fecha_vigencia).alias("fecha_vigencia"))
 
         if cols_to_add:
             df = df.with_columns(cols_to_add)
+        return df
 
-        # Ensure table exists (lazy load via first chunk)
+    def _append_precios(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
+        """Write one buffered chunk to the fact table (one data-file batch)."""
+        if df.is_empty():
+            return
         self._ensure_iceberg_table(df)
+        if not self._iceberg_table:
+            logger.error(
+                "[ICEBERG] Failed to load/create Iceberg table, skipping append"
+            )
+            return
+        logger.info(f"[ICEBERG] Appending {len(df):,} rows to Iceberg table...")
+        self._iceberg_table.append(df.to_arrow())
+        self.log_success(fecha_vigencia, len(df))
 
-        if self._iceberg_table:
-            logger.info(f"[ICEBERG] Appending {len(df)} rows to Iceberg table...")
-            self._iceberg_table.append(df.to_arrow())
-            self.log_success(fecha_vigencia, len(df))
-        else:
-            logger.error("[ICEBERG] Failed to load/create Iceberg table, skipping append")
+    def load(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
+        """
+        Buffer a precios chunk and append when the target row count is reached.
 
-    def _ensure_dimension_table(self, table_name: str, df: pl.DataFrame) -> Table | None:
+        Buffering produces fewer, larger data files than per-batch appends while
+        still avoiding a full-day in-memory materialization.
+        """
+        if not self.catalog:
+            logger.warning(
+                "[ICEBERG] Skipping Iceberg append (catalog not initialized)"
+            )
+            return
+        if df.is_empty():
+            return
+
+        df = self._prepare_precios_df(df, fecha_vigencia)
+        self._precios_buffer.append(df)
+        self._precios_buffer_rows += len(df)
+
+        if self._precios_buffer_rows >= self._precios_append_target_rows:
+            self.flush(fecha_vigencia)
+
+    def flush(self, fecha_vigencia: date) -> None:
+        """Append any remaining buffered fact and dimension rows."""
+        if self._precios_buffer:
+            combined = pl.concat(self._precios_buffer)
+            self._precios_buffer.clear()
+            self._precios_buffer_rows = 0
+            self._append_precios(combined, fecha_vigencia)
+
+        if self._productos_buffer:
+            combined_prod = pl.concat(self._productos_buffer)
+            self._productos_buffer.clear()
+            table = self._ensure_dimension_table("dim_productos", combined_prod)
+            if table:
+                logger.info(
+                    f"[ICEBERG] Appending {len(combined_prod):,} rows to dim_productos..."
+                )
+                table.append(combined_prod.to_arrow())
+
+    def _ensure_dimension_table(
+        self, table_name: str, df: pl.DataFrame
+    ) -> Table | None:
         if not self.catalog:
             return None
-        
+
         identifier = f"sepa.{table_name}"
         if identifier in self._dim_tables:
             return self._dim_tables[identifier]
@@ -235,7 +278,9 @@ class IcebergLoader(BaseLoader):
                 self._dim_tables[identifier] = table
                 return table
             except Exception as e:
-                logger.error(f"[ICEBERG] Failed to create dimension table {identifier}: {e}")
+                logger.error(
+                    f"[ICEBERG] Failed to create dimension table {identifier}: {e}"
+                )
                 return None
 
     def _prepare_dim_df(self, df: pl.DataFrame, fecha_vigencia: date) -> pl.DataFrame:
@@ -267,15 +312,19 @@ class IcebergLoader(BaseLoader):
     def load_productos(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
         if not self.catalog or df.is_empty():
             return
-        
+
         # Ensure the chunk itself only has unique products before checking against history
         df_unique = df.unique(subset=["id_producto"])
-        
+
         # Filter out products we've already seen today
-        new_products = df_unique.filter(~pl.col("id_producto").is_in(list(self._seen_productos)))
-        
+        new_products = df_unique.filter(
+            ~pl.col("id_producto").is_in(list(self._seen_productos))
+        )
+
         if new_products.is_empty():
-            logger.debug("[ICEBERG] No new products to append to dim_productos in this chunk.")
+            logger.debug(
+                "[ICEBERG] No new products to append to dim_productos in this chunk."
+            )
             return
 
         # Update seen products
@@ -283,8 +332,4 @@ class IcebergLoader(BaseLoader):
         self._seen_productos.update(new_ids)
 
         new_products = self._prepare_dim_df(new_products, fecha_vigencia)
-        table = self._ensure_dimension_table("dim_productos", new_products)
-        if table:
-            logger.info(f"[ICEBERG] Appending {len(new_products)} rows to dim_productos...")
-            table.append(new_products.to_arrow())
-
+        self._productos_buffer.append(new_products)
