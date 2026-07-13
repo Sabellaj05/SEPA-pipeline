@@ -2,8 +2,12 @@
 Bronze Parquet Layer — Materializes raw CSV data as Parquet on MinIO.
 
 Reads all child ZIP CSVs (comercio, sucursales, productos) extracted from the
-daily master ZIP, concatenates each table type, and writes a single Parquet
-file per table per date to bronze/parquet/.
+daily master ZIP and writes a single Parquet file per table per date to
+bronze/parquet/.
+
+Productos (the large fact-like table) is staged with a streaming ParquetWriter:
+each child CSV is read, written as a row group, then freed — avoiding a full
+in-memory concat of ~12–15M rows.
 
 Writes are staged under ``.staging/`` and committed only when all three tables
 succeed, then a ``_SUCCESS`` marker is written. ``exists()`` requires the
@@ -17,9 +21,10 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List
 
 import polars as pl
+import pyarrow as pa
 import pyarrow.parquet as pq
 from pyarrow import fs
 
@@ -156,13 +161,126 @@ class ParquetLoader:
             f"[BRONZE] Day {fecha_vigencia} committed ({SUCCESS_MARKER} written)"
         )
 
+    def _read_csv_frame(
+        self, path: Path, schema: Dict[str, type[pl.DataType]]
+    ) -> pl.DataFrame | None:
+        """Read one pipe-delimited SEPA CSV; return None on failure."""
+        try:
+            df = pl.read_csv(
+                path,
+                separator="|",
+                encoding="utf8-lossy",
+                has_header=True,
+                null_values=["", "NULL", "null"],
+                schema_overrides=schema,
+                truncate_ragged_lines=True,
+                ignore_errors=True,
+                quote_char=None,
+            )
+            return df.rename({col: col.lstrip("\ufeff").strip() for col in df.columns})
+        except Exception as e:
+            logger.warning(f"[BRONZE] Failed to read {path}: {e}")
+            return None
+
+    def _iter_table_frames(
+        self,
+        all_csv_paths: List[Dict[str, Path]],
+        table_type: str,
+    ) -> Iterator[pl.DataFrame]:
+        """Yield one DataFrame per child-ZIP CSV for ``table_type``."""
+        schema = get_schema_dict(table_type)
+        for csv_paths in all_csv_paths:
+            if table_type not in csv_paths:
+                continue
+            df = self._read_csv_frame(csv_paths[table_type], schema)
+            if df is not None and df.height > 0:
+                yield df
+
+    @staticmethod
+    def _align_to_columns(df: pl.DataFrame, columns: list[str]) -> pl.DataFrame:
+        """Reorder / pad columns so every batch matches the first frame's schema."""
+        missing = [c for c in columns if c not in df.columns]
+        if missing:
+            df = df.with_columns([pl.lit(None).alias(c) for c in missing])
+        return df.select(columns)
+
+    def _stage_table_streamed(
+        self,
+        table_type: str,
+        all_csv_paths: List[Dict[str, Path]],
+        fecha_vigencia: date,
+    ) -> Dict[str, int]:
+        """
+        Stream child CSVs into a single staged parquet via ParquetWriter.
+
+        Peak memory is roughly one child-ZIP frame (not the full day concat).
+        Still produces one unified ``{table_type}.parquet`` after commit.
+        """
+        staging_path = self._staging_path(fecha_vigencia, table_type)
+        writer: pq.ParquetWriter | None = None
+        output: Any | None = None
+        column_names: list[str] | None = None
+        arrow_schema: pa.Schema | None = None
+        total_csv_rows = 0
+        csv_cols = 0
+        frames_written = 0
+
+        try:
+            for df in self._iter_table_frames(all_csv_paths, table_type):
+                if writer is None:
+                    column_names = list(df.columns)
+                    csv_cols = len(column_names)
+                    arrow_table = df.to_arrow()
+                    arrow_schema = arrow_table.schema
+                    output = self._open_output(staging_path)
+                    writer = pq.ParquetWriter(
+                        output,
+                        arrow_schema,
+                        compression="zstd",
+                    )
+                    writer.write_table(arrow_table)
+                else:
+                    assert column_names is not None
+                    aligned = self._align_to_columns(df, column_names)
+                    # Cast to the writer's schema so column types stay stable.
+                    table = aligned.to_arrow()
+                    if arrow_schema is not None:
+                        table = table.cast(arrow_schema)
+                    writer.write_table(table)
+
+                total_csv_rows += df.height
+                frames_written += 1
+                del df
+
+            if writer is None:
+                logger.warning(
+                    f"[BRONZE] No data for {table_type}, skipping parquet write"
+                )
+                return {"csv_rows": 0, "csv_cols": 0, "parquet_rows": 0}
+
+            logger.info(
+                f"[BRONZE] Staging {table_type}.parquet (streamed): "
+                f"{total_csv_rows:,} rows from {frames_written} CSV(s) "
+                f"-> s3://{staging_path}"
+            )
+            return {
+                "csv_rows": total_csv_rows,
+                "csv_cols": csv_cols,
+                "parquet_rows": total_csv_rows,
+            }
+        finally:
+            if writer is not None:
+                writer.close()
+            elif output is not None:
+                output.close()
+
     def build(
         self,
         all_csv_paths: List[Dict[str, Path]],
         fecha_vigencia: date,
     ) -> Dict[str, Dict]:
         """
-        Read all extracted CSVs, concatenate by table type, write Parquet to MinIO.
+        Read all extracted CSVs and write Parquet to MinIO (streamed staging).
 
         Files are written under ``.staging/`` first. Only when all three tables
         stage successfully are they promoted to the day prefix and ``_SUCCESS``
@@ -188,66 +306,12 @@ class ParquetLoader:
 
         try:
             for table_type in TABLE_TYPES:
-                schema = get_schema_dict(table_type)
-
-                frames: list[pl.DataFrame] = []
-                total_csv_rows = 0
-                csv_cols = 0
-
-                for csv_paths in all_csv_paths:
-                    if table_type not in csv_paths:
-                        continue
-                    try:
-                        df = pl.read_csv(
-                            csv_paths[table_type],
-                            separator="|",
-                            encoding="utf8-lossy",
-                            has_header=True,
-                            null_values=["", "NULL", "null"],
-                            schema_overrides=schema,
-                            truncate_ragged_lines=True,
-                            ignore_errors=True,
-                            quote_char=None,
-                        )
-                        df = df.rename(
-                            {col: col.lstrip("\ufeff").strip() for col in df.columns}
-                        )
-                        total_csv_rows += df.height
-                        csv_cols = len(df.columns)
-                        frames.append(df)
-                    except Exception as e:
-                        logger.warning(
-                            f"[BRONZE] Failed to read {csv_paths[table_type]}: {e}"
-                        )
-
-                if not frames:
-                    logger.warning(
-                        f"[BRONZE] No data for {table_type}, skipping parquet write"
-                    )
-                    audit[table_type] = {
-                        "csv_rows": 0,
-                        "csv_cols": 0,
-                        "parquet_rows": 0,
-                    }
-                    continue
-
-                df_concat = pl.concat(frames)
-                staging_path = self._staging_path(fecha_vigencia, table_type)
-
-                logger.info(
-                    f"[BRONZE] Staging {table_type}.parquet: "
-                    f"{df_concat.height:,} rows -> s3://{staging_path}"
+                meta = self._stage_table_streamed(
+                    table_type, all_csv_paths, fecha_vigencia
                 )
-
-                with self._open_output(staging_path) as out:
-                    pq.write_table(df_concat.to_arrow(), out, compression="zstd")
-
-                audit[table_type] = {
-                    "csv_rows": total_csv_rows,
-                    "csv_cols": csv_cols,
-                    "parquet_rows": df_concat.height,
-                }
-                staged.append(table_type)
+                audit[table_type] = meta
+                if meta["parquet_rows"] > 0:
+                    staged.append(table_type)
 
             if set(staged) == set(TABLE_TYPES):
                 self._commit_day(fecha_vigencia)
@@ -284,7 +348,7 @@ class ParquetLoader:
             path = self._parquet_path(fecha_vigencia, table_type)
             logger.info(f"[BRONZE] Reading s3://{path}")
             table = pq.read_table(path, filesystem=self._s3)
-            result[table_type] = pl.from_arrow(table)
+            result[table_type] = pl.DataFrame(pl.from_arrow(table))
 
         return result
 
@@ -292,7 +356,7 @@ class ParquetLoader:
         self,
         fecha_vigencia: date,
         batch_size: int = 500_000,
-    ):
+    ) -> Iterator[pl.DataFrame | pl.Series]:
         """
         Yield productos parquet in batches to keep memory bounded.
 
@@ -309,6 +373,8 @@ class ParquetLoader:
         parquet_file = pq.ParquetFile(self._s3.open_input_file(path))
 
         for batch in parquet_file.iter_batches(batch_size=batch_size):
-            df = pl.from_arrow(batch)
+            ## added pl.DataFrame() wrapper to avoid typing issues
+            ## as stated in pl.from_arrow docstrings
+            df = pl.DataFrame(pl.from_arrow(batch))
             if df.height > 0:
                 yield df

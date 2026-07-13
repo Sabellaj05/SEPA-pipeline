@@ -22,9 +22,9 @@ class TestSchemaTransforms:
             "productos_precio_lista": ["100.5"],
             "extra_column": ["drop_me"]
         })
-        
+
         df_silver = to_silver_precios(df_raw)
-        
+
         assert "extra_column" not in df_silver.columns
         assert df_silver["ean"][0] is True
         assert df_silver["precio_lista"][0] == 100.5
@@ -38,9 +38,9 @@ class TestSchemaTransforms:
             "id_sucursal": ["1"],
             "sucursales_provincia": ["Buenos Aires"]
         })
-        
+
         df_silver = to_silver_sucursales(df_raw)
-        
+
         assert df_silver["provincia"][0] == "AR-B"
 
     def test_to_silver_productos_marca_null_fill(self):
@@ -53,16 +53,16 @@ class TestSchemaTransforms:
             "productos_cantidad_presentacion": ["1.0", "2.0"],
             "productos_unidad_medida_presentacion": ["kg", "kg"]
         })
-        
+
         df_silver = to_silver_productos(df_raw)
-        
+
         assert df_silver["marca"][0] == "Marca A"
         assert df_silver["marca"][1] == "S/D"
 
     def test_get_schema_dict_invalid(self):
         with pytest.raises(ValueError, match="Unknown table type"):
             get_schema_dict("invalid_table")
-            
+
     def test_get_silver_schema_dict_invalid(self):
         with pytest.raises(ValueError, match="Unknown Silver table"):
             get_silver_schema_dict("invalid_table")

@@ -250,6 +250,12 @@ def process_daily_data(
 
         total_loaded += chunk.height
 
+    # Flush buffered precios so the last partial target-size window is written.
+    if iceberg_loader:
+        iceberg_loader.flush(target_date)
+    if bigquery_loader:
+        bigquery_loader.flush(target_date)
+
     drop_stats = validator.get_drop_stats()
     drop_stats["silver_loaded"] = total_loaded
 

@@ -26,6 +26,7 @@ class BigQueryLoader(BaseLoader):
         # Workaround for BigQuery mapping null parent-snapshot-ids to strings instead of ints
         # BigQueryMetastoreCatalog checks the GLOBAL config for this property, not the catalog properties.
         import os
+
         os.environ["PYICEBERG_LEGACY_CURRENT_SNAPSHOT_ID"] = "True"
 
         # BigQuery datasets serve as namespaces. Use the one configured.
@@ -82,6 +83,9 @@ class BigQueryLoader(BaseLoader):
 
         # Clear seen products for the new load
         self._seen_productos.clear()
+        self._precios_buffer.clear()
+        self._precios_buffer_rows = 0
+        self._productos_buffer.clear()
 
     def _cleanup_dimension_table(self, table_name: str, fecha_vigencia: date) -> None:
         if not self.catalog:
@@ -153,19 +157,10 @@ class BigQueryLoader(BaseLoader):
         except Exception as e:
             logger.warning(f"[BIGQUERY] Failed to upgrade format-version: {e}")
 
-    def load(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
-        """
-        Append a chunk of data into the BigQuery Iceberg table.
-        """
-        self.log_start(fecha_vigencia)
-
-        if not self.catalog:
-            logger.warning(
-                "[BIGQUERY] Skipping BigQuery append (catalog not initialized)"
-            )
-            return
-
-        # Ensure fecha_vigencia and scraped_at are present
+    def _prepare_precios_df(
+        self, df: pl.DataFrame, fecha_vigencia: date
+    ) -> pl.DataFrame:
+        """Inject fecha_vigencia / scraped_at so append schema is stable."""
         cols_to_add = []
         if "scraped_at" not in df.columns:
             cols_to_add.append(pl.lit(datetime.now()).alias("scraped_at"))
@@ -179,22 +174,68 @@ class BigQueryLoader(BaseLoader):
 
         if cols_to_add:
             df = df.with_columns(cols_to_add)
+        return df
 
+    def _append_precios(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
+        """Write one buffered chunk to the fact table (one data-file batch)."""
+        if df.is_empty():
+            return
         self._ensure_iceberg_table(df)
-
-        if self._iceberg_table:
-            logger.info(f"[BIGQUERY] Appending {len(df)} rows to BigLake table...")
-            self._iceberg_table.append(df.to_arrow())
-            self.log_success(fecha_vigencia, len(df))
-        else:
+        if not self._iceberg_table:
             logger.error(
                 "[BIGQUERY] Failed to load/create BigQuery table, skipping append"
             )
+            return
+        logger.info(f"[BIGQUERY] Appending {len(df):,} rows to BigLake table...")
+        self._iceberg_table.append(df.to_arrow())
+        self.log_success(fecha_vigencia, len(df))
 
-    def _ensure_dimension_table(self, table_name: str, df: pl.DataFrame) -> Table | None:
+    def load(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
+        """
+        Buffer a precios chunk and append when the target row count is reached.
+
+        Same strategy as IcebergLoader: fewer, larger data files without holding
+        the full day in memory.
+        """
+        if not self.catalog:
+            logger.warning(
+                "[BIGQUERY] Skipping BigQuery append (catalog not initialized)"
+            )
+            return
+        if df.is_empty():
+            return
+
+        df = self._prepare_precios_df(df, fecha_vigencia)
+        self._precios_buffer.append(df)
+        self._precios_buffer_rows += len(df)
+
+        if self._precios_buffer_rows >= self._precios_append_target_rows:
+            self.flush(fecha_vigencia)
+
+    def flush(self, fecha_vigencia: date) -> None:
+        """Append any remaining buffered fact and dimension rows."""
+        if self._precios_buffer:
+            combined = pl.concat(self._precios_buffer)
+            self._precios_buffer.clear()
+            self._precios_buffer_rows = 0
+            self._append_precios(combined, fecha_vigencia)
+
+        if self._productos_buffer:
+            combined_prod = pl.concat(self._productos_buffer)
+            self._productos_buffer.clear()
+            table = self._ensure_dimension_table("dim_productos", combined_prod)
+            if table:
+                logger.info(
+                    f"[BIGQUERY] Appending {len(combined_prod):,} rows to dim_productos..."
+                )
+                table.append(combined_prod.to_arrow())
+
+    def _ensure_dimension_table(
+        self, table_name: str, df: pl.DataFrame
+    ) -> Table | None:
         if not self.catalog:
             return None
-        
+
         identifier = f"{self._namespace}.{table_name}"
         if identifier in self._dim_tables:
             return self._dim_tables[identifier]
@@ -224,7 +265,9 @@ class BigQueryLoader(BaseLoader):
                 self._dim_tables[identifier] = table
                 return table
             except Exception as e:
-                logger.error(f"[BIGQUERY] Failed to create dimension table {identifier}: {e}")
+                logger.error(
+                    f"[BIGQUERY] Failed to create dimension table {identifier}: {e}"
+                )
                 return None
 
     def _prepare_dim_df(self, df: pl.DataFrame, fecha_vigencia: date) -> pl.DataFrame:
@@ -256,15 +299,19 @@ class BigQueryLoader(BaseLoader):
     def load_productos(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
         if not self.catalog or df.is_empty():
             return
-        
+
         # Ensure the chunk itself only has unique products before checking against history
         df_unique = df.unique(subset=["id_producto"])
-        
+
         # Filter out products we've already seen today
-        new_products = df_unique.filter(~pl.col("id_producto").is_in(list(self._seen_productos)))
-        
+        new_products = df_unique.filter(
+            ~pl.col("id_producto").is_in(list(self._seen_productos))
+        )
+
         if new_products.is_empty():
-            logger.debug("[BIGQUERY] No new products to append to dim_productos in this chunk.")
+            logger.debug(
+                "[BIGQUERY] No new products to append to dim_productos in this chunk."
+            )
             return
 
         # Update seen products
@@ -272,7 +319,4 @@ class BigQueryLoader(BaseLoader):
         self._seen_productos.update(new_ids)
 
         new_products = self._prepare_dim_df(new_products, fecha_vigencia)
-        table = self._ensure_dimension_table("dim_productos", new_products)
-        if table:
-            logger.info(f"[BIGQUERY] Appending {len(new_products)} rows to dim_productos...")
-            table.append(new_products.to_arrow())
+        self._productos_buffer.append(new_products)
