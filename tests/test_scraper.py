@@ -365,12 +365,12 @@ class TestSepaScraper:
     async def test_validate_zip_date_consensus_valid(self, sample_url, sample_data_dir):
         """Test consensus logic with a predominantly valid ZIP."""
         from .factories import make_sepa_zip
-        
+
         async with SepaScraper(url=sample_url, data_dir=str(sample_data_dir), target_date="2026-01-15") as scraper:
             zip_bytes = make_sepa_zip(target_date="2026-01-15", n_nested_zips=3, stale_majority=False)
             zip_path = sample_data_dir / "sepa_valid_consensus.zip"
             zip_path.write_bytes(zip_bytes)
-            
+
             result = scraper._validate_zip_date(zip_path)
             assert result is True
 
@@ -378,13 +378,13 @@ class TestSepaScraper:
     async def test_validate_zip_date_consensus_stale(self, sample_url, sample_data_dir):
         """Test consensus logic with a predominantly stale ZIP."""
         from .factories import make_sepa_zip
-        
+
         async with SepaScraper(url=sample_url, data_dir=str(sample_data_dir), target_date="2026-01-15") as scraper:
             # Build a ZIP where the majority of nested ZIPs have stale dates
             zip_bytes = make_sepa_zip(target_date="2026-01-15", n_nested_zips=5, stale_majority=True)
             zip_path = sample_data_dir / "sepa_stale_consensus.zip"
             zip_path.write_bytes(zip_bytes)
-            
+
             result = scraper._validate_zip_date(zip_path)
             assert result is False
 

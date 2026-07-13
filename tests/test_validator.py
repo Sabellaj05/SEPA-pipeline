@@ -1,8 +1,5 @@
-import pytest
 import polars as pl
-from pathlib import Path
 from sepa_pipeline.validator import SEPAValidator
-from .factories import make_comercio_df, make_sucursales_df, make_productos_df
 
 class TestSEPAValidator:
 
@@ -19,7 +16,7 @@ class TestSEPAValidator:
             "comercio_ultima_actualizacion": ["U"],
             "comercio_version_sepa": ["1"]
         })
-        
+
         cleaned = validator.validate_comercio(df)
         assert cleaned["id_bandera"].dtype == pl.Int32
         assert cleaned["comercio_cuit"].dtype == pl.Int64
@@ -45,40 +42,40 @@ class TestSEPAValidator:
             "productos_precio_unitario_promo2": ["", ""],
             "productos_leyenda_promo2": ["", ""]
         })
-        
+
         cleaned = validator.validate_productos(df)
         assert cleaned.height == 1
         assert cleaned["id_producto"][0] == 100
 
     def test_validate_referential_integrity(self):
         validator = SEPAValidator()
-        
+
         df_comercios = pl.DataFrame({
             "id_comercio": ["1"],
             "id_bandera": [1]
         })
-        
+
         df_sucursales = pl.DataFrame({
             "id_comercio": ["1", "2"], # "2" is orphaned
             "id_bandera": [1, 1],
             "id_sucursal": [10, 20]
         })
-        
+
         df_productos = pl.DataFrame({
             "id_comercio": ["1", "1"],
             "id_bandera": [1, 1],
             "id_sucursal": [10, 99], # "99" is orphaned
             "id_producto": [100, 200]
         })
-        
+
         clean_sucursales, clean_productos = validator.validate_referential_integrity(
             df_comercios, df_sucursales, df_productos
         )
-        
+
         # Orphaned sucursal should be dropped
         assert clean_sucursales.height == 1
         assert clean_sucursales["id_comercio"][0] == "1"
-        
+
         # Orphaned producto should be dropped
         assert clean_productos.height == 1
         assert clean_productos["id_sucursal"][0] == 10
