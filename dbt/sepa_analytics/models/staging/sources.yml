@@ -25,15 +25,21 @@ sources:
             description: "Foreign key to dim_comercios"
           - name: id_bandera
             description: "Brand ID within the commerce chain"
-          - name: productos_precio_lista
+          - name: ean
+            description: "True when id_producto is a standard EAN/UPC-A code"
+          - name: descripcion
+            description: "Product description denormalized onto the fact"
+          - name: marca
+            description: "Product brand denormalized onto the fact"
+          - name: precio_lista
             description: "The listed price of the product"
-          - name: productos_precio_unitario_promo1
+          - name: precio_promo1
             description: "First promotional unit price if available"
-          - name: productos_leyenda_promo1
+          - name: leyenda_promo1
             description: "First promotional text (e.g., 2x1)"
-          - name: productos_precio_unitario_promo2
+          - name: precio_promo2
             description: "Second promotional unit price if available"
-          - name: productos_leyenda_promo2
+          - name: leyenda_promo2
             description: "Second promotional text"
           - name: scraped_at
             description: "Exact timestamp the scraper collected this item"

@@ -23,9 +23,9 @@ SELECT
     p.id_sucursal,
 
     -- Product info (cleaned)
-    {{ clean_description('d.descripcion') }} AS descripcion_clean,
-    d.marca,
-    {{ categorize_product(clean_description('d.descripcion')) }} AS categoria_inferida,
+    {{ clean_description('p.descripcion') }} AS descripcion_clean,
+    p.marca,
+    {{ categorize_product(clean_description('p.descripcion')) }} AS categoria_inferida,
 
     -- Chain info
     c.bandera_nombre,
@@ -39,13 +39,11 @@ SELECT
     CASE WHEN p.precio_unitario_promo1 IS NOT NULL THEN true ELSE false END AS tiene_promo,
     COALESCE(p.precio_unitario_promo1, p.precio_lista) AS precio_efectivo
 
-FROM {{ ref('stg_precios') }} p
-LEFT JOIN {{ ref('stg_dim_productos') }} d
-    ON p.id_producto = d.id_producto
-LEFT JOIN {{ ref('stg_dim_sucursales') }} s
+FROM {{ ref('fct_price_quotes') }} p
+LEFT JOIN {{ ref('dim_sucursales_current') }} s
     ON p.id_sucursal = s.id_sucursal
     AND p.id_comercio = s.id_comercio
-LEFT JOIN {{ ref('stg_dim_comercios') }} c
+LEFT JOIN {{ ref('dim_comercios_current') }} c
     ON p.id_comercio = c.id_comercio
     AND p.id_bandera = c.id_bandera
 WHERE p.precio_lista >= 10.0
