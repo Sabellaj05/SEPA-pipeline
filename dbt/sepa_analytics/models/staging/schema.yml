@@ -4,16 +4,15 @@ models:
   - name: stg_dim_comercios
     description: >
       Staging dimension for merchant chains and banners (e.g., Coto, Carrefour, Dia).
-      Sourced from silver.dim_comercios (BigLake Iceberg). Append-only daily snapshot
-      partitioned by fecha_vigencia -- the effective primary key is [id_comercio, fecha_vigencia].
-      ID columns are cast from INT64 (Silver) to STRING to satisfy the staging type contract.
+      Sourced from silver.dim_comercios. Append-only daily snapshot with fecha_vigencia,
+      but not partitioned in Iceberg. ID columns are cast to STRING for the dbt contract.
     columns:
       - name: id_comercio
-        description: "Merchant chain identifier. Cast from INT64 to STRING. Primary key (composite with fecha_vigencia in Silver)."
+        description: "Merchant chain identifier. Composite snapshot key with id_bandera and fecha_vigencia."
         tests:
           - not_null
       - name: id_bandera
-        description: "Banner/flag identifier within the chain. Cast from INT64 to STRING."
+        description: "Banner/flag identifier within the chain."
       - name: cuit
         description: "Argentine tax identifier (CUIT) for the legal entity."
       - name: razon_social
@@ -22,31 +21,24 @@ models:
         description: "Commercial banner name (e.g., 'Coto', 'Jumbo')."
       - name: bandera_url
         description: "URL of the official website for the banner."
-      - name: version_sepa
-        description: "SEPA schema version used by this merchant's data submission."
-      - name: ultima_actualizacion
-        description: "Last update timestamp reported by the merchant in their submission."
+      - name: fecha_vigencia
+        description: "Snapshot business date."
+        tests:
+          - not_null
 
   - name: stg_dim_productos
     description: >
       Staging dimension for unique products with EAN codes and descriptions.
-      Sourced from silver.dim_productos (BigLake Iceberg). Append-only daily snapshot --
-      effective primary key is [id_producto, fecha_vigencia]. 100% of rows have
-      productos_descripcion populated. ~7.8% have NULL marca -- this is an upstream SEPA
-      source issue where some merchants do not report brand. ID columns cast INT64 -> STRING.
+      Sourced from silver.dim_productos. Append-only daily snapshot with fecha_vigencia,
+      but not partitioned in Iceberg. Product price/reference fields live on stg_precios,
+      not this dimension.
     columns:
       - name: id_producto
-        description: "Product identifier (typically EAN). Cast from INT64 to STRING. Primary key (composite with fecha_vigencia in Silver)."
+        description: "Product identifier. Composite snapshot key with fecha_vigencia."
         tests:
           - not_null
-      - name: id_comercio
-        description: "Merchant chain that reported this product. Cast from INT64 to STRING."
-      - name: id_bandera
-        description: "Banner within the chain that reported this product. Cast from INT64 to STRING."
-      - name: id_sucursal
-        description: "Branch that reported this product. Cast from INT64 to STRING."
       - name: ean
-        description: "EAN barcode of the product. May differ from id_producto for weight-variable items."
+        description: "True when id_producto is a standard EAN/UPC-A code."
       - name: descripcion
         description: "Human-readable product name (e.g., 'Leche entera La Serenisima 1L'). 100% populated in Silver."
       - name: marca
@@ -55,23 +47,18 @@ models:
         description: "Numeric quantity in the standard presentation unit."
       - name: unidad_medida_presentacion
         description: "Unit of measure for the presentation (e.g., 'Kg', 'L', 'Un')."
-      - name: precio_referencia
-        description: "Reference price for unit comparison purposes."
-      - name: cantidad_referencia
-        description: "Reference quantity for unit price calculation."
-      - name: unidad_medida_referencia
-        description: "Unit of measure for the reference price (e.g., '100g', '1L')."
-      - name: leyenda_promo1
-        description: "Text description of the first active promotion if any (e.g., '2x1')."
-      - name: leyenda_promo2
-        description: "Text description of the second active promotion if any."
+      - name: fecha_vigencia
+        description: "Snapshot business date."
+        tests:
+          - not_null
 
   - name: stg_dim_sucursales
     description: >
       Staging dimension for physical store branches with geolocation and contact data.
-      Sourced from silver.dim_sucursales (BigLake Iceberg). Append-only daily snapshot.
+      Sourced from silver.dim_sucursales. Append-only daily snapshot with fecha_vigencia,
+      but not partitioned in Iceberg.
       The provincia column is critical for mart_store_coverage aggregations.
-      ID columns cast INT64 -> STRING to match the staging type contract.
+      ID columns are cast to STRING to match the staging type contract.
     columns:
       - name: id_sucursal
         description: "Branch identifier. Cast from INT64 to STRING. Primary key (composite with fecha_vigencia in Silver)."
@@ -95,14 +82,17 @@ models:
         description: "Latitude coordinate of the branch. Cast from string to FLOAT64."
       - name: longitud
         description: "Longitude coordinate of the branch. Cast from string to FLOAT64."
+      - name: fecha_vigencia
+        description: "Snapshot business date."
+        tests:
+          - not_null
 
   - name: stg_precios
     description: >
       Staging fact table for daily price snapshots. Sourced from silver.precios (BigLake Iceberg),
-      partitioned by fecha_vigencia. This is a NARROW FACT -- product attributes
-      (descripcion, marca) are intentionally excluded from the Silver fact by pipeline.py.
-      Any mart needing product names must JOIN stg_dim_productos, not read from this model.
-      All ID columns cast from INT64 to STRING. Filter WHERE precio_lista > 0 recommended
+      partitioned by fecha_vigencia. Product attributes (descripcion, marca, presentation)
+      are denormalized onto the Silver fact for analytical queries.
+      All ID columns are cast to STRING. Filter WHERE precio_lista > 0 recommended
       in marts; sentinel prices (0.01-0.10) exist in the upstream SEPA source.
     columns:
       - name: fecha_vigencia
@@ -110,7 +100,7 @@ models:
         tests:
           - not_null
       - name: id_producto
-        description: "Product identifier. Cast from INT64 to STRING. Foreign key to stg_dim_productos.id_producto."
+        description: "Product identifier. Foreign key to stg_dim_productos.id_producto."
         tests:
           - not_null
       - name: id_sucursal

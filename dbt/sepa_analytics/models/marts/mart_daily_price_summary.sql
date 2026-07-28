@@ -12,13 +12,12 @@
 SELECT
     p.fecha_vigencia,
     p.id_producto,
-    -- Cross-adapter aggregation: ANY_VALUE (BQ) vs MIN (DuckDB)
     {% if target.type == 'bigquery' %}
-        ANY_VALUE(d.descripcion)           AS descripcion,
-        ANY_VALUE(d.marca)                 AS marca,
+        ANY_VALUE(p.descripcion)           AS descripcion,
+        ANY_VALUE(p.marca)                 AS marca,
     {% else %}
-        MIN(d.descripcion)                 AS descripcion,
-        MIN(d.marca)                       AS marca,
+        MIN(p.descripcion)                 AS descripcion,
+        MIN(p.marca)                       AS marca,
     {% endif %}
     COUNT(*)                           AS num_observaciones,
     AVG(p.precio_lista)                AS precio_promedio,
@@ -26,9 +25,7 @@ SELECT
     MAX(p.precio_lista)                AS precio_maximo,
     -- NULL means no active promotion -- the signal is intentional, not a defect.
     MIN(p.precio_unitario_promo1) AS mejor_precio_promo
-FROM {{ ref('stg_precios') }} p
-LEFT JOIN {{ ref('stg_dim_productos') }} d
-    ON p.id_producto = d.id_producto
+FROM {{ ref('fct_price_quotes') }} p
 WHERE p.precio_lista > 0
 {% if is_incremental() %}
   -- 2-day lookback window handles late-arriving data from delayed ingestion runs

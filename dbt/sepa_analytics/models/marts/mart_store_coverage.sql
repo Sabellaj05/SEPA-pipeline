@@ -16,8 +16,8 @@ SELECT
     COUNT(DISTINCT p.id_comercio)  AS cadenas_activas,
     COUNT(DISTINCT p.id_producto)  AS productos_reportados,
     COUNT(p.id_producto)           AS total_precios
-FROM {{ ref('stg_precios') }} p
-LEFT JOIN {{ ref('stg_dim_sucursales') }} s
+FROM {{ ref('fct_price_quotes') }} p
+LEFT JOIN {{ ref('dim_sucursales_current') }} s
     ON p.id_sucursal = s.id_sucursal
     AND p.id_comercio = s.id_comercio
 WHERE 1=1

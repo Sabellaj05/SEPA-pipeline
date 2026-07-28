@@ -22,15 +22,13 @@ WITH chain_avg_prices AS (
     SELECT
         p.fecha_vigencia,
         p.id_producto,
-        {{ clean_description('d.descripcion') }} AS descripcion_clean,
-        d.marca,
+        {{ clean_description('p.descripcion') }} AS descripcion_clean,
+        p.marca,
         c.bandera_nombre AS cadena,
         AVG(p.precio_lista) AS precio_promedio,
         COUNT(*) AS num_observaciones
-    FROM {{ ref('stg_precios') }} p
-    LEFT JOIN {{ ref('stg_dim_productos') }} d
-        ON p.id_producto = d.id_producto
-    LEFT JOIN {{ ref('stg_dim_comercios') }} c
+    FROM {{ ref('fct_price_quotes') }} p
+    LEFT JOIN {{ ref('dim_comercios_current') }} c
         ON p.id_comercio = c.id_comercio
         AND p.id_bandera = c.id_bandera
     WHERE p.precio_lista >= 10.0
