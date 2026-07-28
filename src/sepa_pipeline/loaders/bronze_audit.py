@@ -51,9 +51,9 @@ SILVER_AUDIT_SCHEMA = pa.schema(
 
 # Maps internal ParquetLoader table keys → audit table_type values
 _BRONZE_TABLE_TYPE_NAMES = {
-    "comercio":   "bronze_comercio",
+    "comercio": "bronze_comercio",
     "sucursales": "bronze_sucursales",
-    "productos":  "bronze_productos",
+    "productos": "bronze_productos",
 }
 
 
@@ -66,9 +66,7 @@ class SEPAAuditWriter:
     def __init__(self, config: SEPAConfig):
         self.config = config
         try:
-            self.catalog: Catalog | None = load_catalog(
-                "default", **config.iceberg_catalog_config
-            )
+            self.catalog: Catalog | None = load_catalog("default")
         except Exception as e:
             logger.warning(f"[AUDIT] Failed to initialize Iceberg catalog: {e}")
             self.catalog = None
@@ -118,13 +116,17 @@ class SEPAAuditWriter:
         """
         table = self._ensure_table(self._BRONZE_TABLE_ID, BRONZE_AUDIT_SCHEMA)
         if table is None:
-            logger.warning("[AUDIT] Skipping bronze audit write (catalog not available)")
+            logger.warning(
+                "[AUDIT] Skipping bronze audit write (catalog not available)"
+            )
             return
 
         now = datetime.now()
         rows = []
         for internal_key, stats in audit_data.items():
-            table_type = _BRONZE_TABLE_TYPE_NAMES.get(internal_key, f"bronze_{internal_key}")
+            table_type = _BRONZE_TABLE_TYPE_NAMES.get(
+                internal_key, f"bronze_{internal_key}"
+            )
             rows.append(
                 {
                     "fecha_vigencia": fecha_vigencia,
@@ -141,17 +143,22 @@ class SEPAAuditWriter:
                 }
             )
 
-        df = pl.DataFrame(rows, schema_overrides={
-            "csv_row_count": pl.Int64,
-            "csv_column_count": pl.Int32,
-            "parquet_row_count": pl.Int64,
-            "malformed_zips_count": pl.Int64,
-            "stale_count": pl.Int64,
-            "unknown_count": pl.Int64,
-        })
+        df = pl.DataFrame(
+            rows,
+            schema_overrides={
+                "csv_row_count": pl.Int64,
+                "csv_column_count": pl.Int32,
+                "parquet_row_count": pl.Int64,
+                "malformed_zips_count": pl.Int64,
+                "stale_count": pl.Int64,
+                "unknown_count": pl.Int64,
+            },
+        )
         arrow_table = df.to_arrow().cast(BRONZE_AUDIT_SCHEMA)
 
-        logger.info(f"[AUDIT] Writing {len(rows)} bronze audit rows for {fecha_vigencia}")
+        logger.info(
+            f"[AUDIT] Writing {len(rows)} bronze audit rows for {fecha_vigencia}"
+        )
         table.append(arrow_table)
         logger.info("[AUDIT] Bronze audit write complete")
 
@@ -165,7 +172,9 @@ class SEPAAuditWriter:
         """
         table = self._ensure_table(self._SILVER_TABLE_ID, SILVER_AUDIT_SCHEMA)
         if table is None:
-            logger.warning("[AUDIT] Skipping silver audit write (catalog not available)")
+            logger.warning(
+                "[AUDIT] Skipping silver audit write (catalog not available)"
+            )
             return
 
         row = {
@@ -178,12 +187,15 @@ class SEPAAuditWriter:
             "ingested_at": datetime.now(),
         }
 
-        df = pl.DataFrame([row], schema_overrides={
-            "validation_dropped": pl.Int64,
-            "integrity_dropped": pl.Int64,
-            "negative_price_count": pl.Int64,
-            "silver_loaded": pl.Int64,
-        })
+        df = pl.DataFrame(
+            [row],
+            schema_overrides={
+                "validation_dropped": pl.Int64,
+                "integrity_dropped": pl.Int64,
+                "negative_price_count": pl.Int64,
+                "silver_loaded": pl.Int64,
+            },
+        )
         arrow_table = df.to_arrow().cast(SILVER_AUDIT_SCHEMA)
 
         logger.info(

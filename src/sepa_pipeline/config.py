@@ -7,7 +7,7 @@ environment variables. Data model definitions live in schema.py.
 
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Dict
 
 import polars as pl
 from dotenv import load_dotenv
@@ -63,24 +63,6 @@ class SEPAConfig:
             raise ValueError(
                 f"Missing required environment variables: {', '.join(missing)}"
             )
-
-    @property
-    def iceberg_catalog_config(self) -> dict[str, Any]:
-        """PyIceberg REST Catalog config for Nessie (local MinIO)."""
-        endpoint = self.minio_endpoint
-        assert endpoint is not None
-        if not endpoint.startswith("http"):
-            endpoint = f"http://{endpoint}"
-        return {
-            "type": "rest",
-            "uri": "http://localhost:19120/iceberg/main",
-            "warehouse": f"s3://{self.minio_bucket}/silver/iceberg",
-            "s3.endpoint": endpoint,
-            "s3.access-key-id": self.minio_access_key,
-            "s3.secret-access-key": self.minio_secret_key,
-            "s3.region": self.minio_region or "us-east-1",
-            "s3.path-style-access": "true",
-        }
 
     @property
     def bigquery_catalog_config(self) -> dict:

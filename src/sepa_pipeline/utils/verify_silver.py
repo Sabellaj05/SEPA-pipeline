@@ -35,18 +35,25 @@ from sepa_pipeline.schema import (
 
 # ── Columns that must be non-null for the table to be considered valid ────────
 NULL_CHECKS: Dict[str, list[str]] = {
-    "sepa.precios":        ["id_comercio", "id_bandera", "id_sucursal", "id_producto",
-                            "precio_lista", "descripcion", "marca"],
+    "sepa.precios": [
+        "id_comercio",
+        "id_bandera",
+        "id_sucursal",
+        "id_producto",
+        "precio_lista",
+        "descripcion",
+        "marca",
+    ],
     "sepa.dim_sucursales": ["id_comercio", "id_bandera", "id_sucursal", "provincia"],
-    "sepa.dim_comercios":  ["id_comercio", "id_bandera", "cuit", "razon_social"],
-    "sepa.dim_productos":  ["id_producto", "descripcion", "marca"],
+    "sepa.dim_comercios": ["id_comercio", "id_bandera", "cuit", "razon_social"],
+    "sepa.dim_productos": ["id_producto", "descripcion", "marca"],
 }
 
 SILVER_SCHEMAS = {
-    "sepa.precios":        SILVER_PRECIOS_SCHEMA,
+    "sepa.precios": SILVER_PRECIOS_SCHEMA,
     "sepa.dim_sucursales": SILVER_DIM_SUCURSALES_SCHEMA,
-    "sepa.dim_comercios":  SILVER_DIM_COMERCIOS_SCHEMA,
-    "sepa.dim_productos":  SILVER_DIM_PRODUCTOS_SCHEMA,
+    "sepa.dim_comercios": SILVER_DIM_COMERCIOS_SCHEMA,
+    "sepa.dim_productos": SILVER_DIM_PRODUCTOS_SCHEMA,
 }
 
 SEP = "─" * 60
@@ -85,14 +92,18 @@ def check_schema(identifier: str, actual_cols: list[str]) -> bool:
     return ok
 
 
-def check_partition_pruning(catalog: Catalog, identifier: str, target_date: date) -> None:
+def check_partition_pruning(
+    catalog: Catalog, identifier: str, target_date: date
+) -> None:
     """
     Compare files scanned with vs without a date filter.
     For a partitioned table, a filtered scan should touch fewer files.
     """
     table = catalog.load_table(identifier)
     total_files = len(list(table.scan().plan_files()))
-    pruned_files = len(list(table.scan(row_filter=EqualTo("fecha_vigencia", target_date)).plan_files()))
+    pruned_files = len(
+        list(table.scan(row_filter=EqualTo("fecha_vigencia", target_date)).plan_files())
+    )
 
     if total_files == 0:
         _warn("No data files found in table")
@@ -134,7 +145,7 @@ def verify_table(catalog: Catalog, identifier: str, target_date: date) -> bool:
     try:
         table = catalog.load_table(identifier)
     except NoSuchTableError:
-        _fail(f"Table not found in catalog")
+        _fail("Table not found in catalog")
         return False
 
     # Schema check (against Iceberg table metadata, not a scan)
@@ -171,7 +182,9 @@ def verify_table(catalog: Catalog, identifier: str, target_date: date) -> bool:
         unique_ids = df["id_producto"].n_unique() if "id_producto" in df.columns else 0
         duplicates = len(df) - unique_ids
         if duplicates > 0:
-            _warn(f"id_producto: {duplicates:,} duplicate rows (expected 0 — dedup not applied?)")
+            _warn(
+                f"id_producto: {duplicates:,} duplicate rows (expected 0 — dedup not applied?)"
+            )
         else:
             _ok(f"id_producto: {unique_ids:,} unique values (no duplicates)")
 
@@ -192,7 +205,7 @@ def verify_table(catalog: Catalog, identifier: str, target_date: date) -> bool:
             _fail(f"provincia: non-ISO values found — {bad} (expected AR-X format)")
 
     # Sample
-    print(f"\n  Sample (3 rows):")
+    print("\n  Sample (3 rows):")
     sample_cols = [c for c in actual_cols if c in df.columns][:8]
     print(df.select(sample_cols).head(3).to_pandas().to_string(index=False))
 
@@ -200,7 +213,9 @@ def verify_table(catalog: Catalog, identifier: str, target_date: date) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Verify Silver Iceberg tables for a given date.")
+    parser = argparse.ArgumentParser(
+        description="Verify Silver Iceberg tables for a given date."
+    )
     parser.add_argument(
         "--date",
         type=str,
@@ -226,7 +241,7 @@ def main() -> None:
     print(f"{'═' * 60}")
 
     if args.catalog == "bigquery":
-        catalog = load_catalog("default", **config.bigquery_catalog_config)
+        catalog = load_catalog("default")
         tables = [
             f"{config.gcp_dataset}.precios",
             f"{config.gcp_dataset}.dim_sucursales",
@@ -234,7 +249,8 @@ def main() -> None:
             f"{config.gcp_dataset}.dim_productos",
         ]
     else:
-        catalog = load_catalog("default", **config.iceberg_catalog_config)
+        # catalog = load_catalog("default", **config.iceberg_catalog_config)
+        catalog = load_catalog("default")
         tables = list(NULL_CHECKS.keys())  # sepa.precios, sepa.dim_*
 
     results = {}
