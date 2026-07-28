@@ -1,4 +1,5 @@
 from datetime import date, datetime
+
 import polars as pl
 from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.exceptions import NamespaceAlreadyExistsError, NoSuchTableError
@@ -6,8 +7,9 @@ from pyiceberg.expressions import EqualTo
 from pyiceberg.table import Table
 from pyiceberg.transforms import DayTransform
 
-from sepa_pipeline.utils.logger import get_logger
 from sepa_pipeline.config import SEPAConfig
+from sepa_pipeline.utils.logger import get_logger
+
 from .base import BaseLoader
 
 logger = get_logger(__name__)
@@ -25,9 +27,7 @@ class IcebergLoader(BaseLoader):
         super().__init__(config)
         self._table_identifier = "sepa.precios"
         try:
-            self.catalog: Catalog | None = load_catalog(
-                "default", **self.config.iceberg_catalog_config
-            )
+            self.catalog: Catalog | None = load_catalog("default")
             self._iceberg_table: Table | None = None
             self._dim_tables: dict[str, Table] = {}
             self._seen_productos: set[str] = set()

@@ -16,7 +16,7 @@ s3_client = boto3.client(
     endpoint_url=config.minio_endpoint,
     aws_access_key_id=config.minio_access_key,
     aws_secret_access_key=config.minio_secret_key,
-    region_name="us-east-1",
+    region_name=config.minio_region,
 )
 
 
@@ -101,7 +101,7 @@ def teardown_silver_tables() -> None:
     in MinIO — which covers all UUID variants regardless of how many rebuild cycles
     have run.
     """
-    catalog = load_catalog("default", **config.iceberg_catalog_config)
+    catalog = load_catalog("default")
     bucket = config.minio_bucket or "sepa-lakehouse"
 
     silver_tables = [
@@ -167,7 +167,9 @@ def check_exists_file(bucket, target_key) -> bool:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Bootstrap or teardown the SEPA Lakehouse.")
+    parser = argparse.ArgumentParser(
+        description="Bootstrap or teardown the SEPA Lakehouse."
+    )
     parser.add_argument(
         "local_dir",
         nargs="?",
@@ -178,7 +180,7 @@ if __name__ == "__main__":
         "--teardown-silver",
         action="store_true",
         help="Drop all silver Iceberg tables from Nessie before bootstrapping. "
-             "Use this to rebuild silver with corrected table locations/partition specs.",
+        "Use this to rebuild silver with corrected table locations/partition specs.",
     )
     args = parser.parse_args()
 

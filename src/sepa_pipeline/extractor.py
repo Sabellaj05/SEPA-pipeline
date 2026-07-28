@@ -46,7 +46,7 @@ class SEPAExtractor:
             try:
                 from datetime import datetime, timedelta
                 target_d = target_date
-                
+
                 with open(comercio_path, "r", encoding="utf-8-sig", errors="replace") as f:
                     for line in f:
                         if "ltima actualizaci" in line.lower():
@@ -54,7 +54,7 @@ class SEPAExtractor:
                             if date_match:
                                 extracted_date_str = date_match.group(1)
                                 extracted_d = datetime.strptime(extracted_date_str, "%Y-%m-%d").date()
-                                
+
                                 if extracted_d < (target_d - timedelta(days=1)):
                                     date_status = "stale"
                                 else:
@@ -97,7 +97,7 @@ class SEPAExtractor:
         malformed_zips_count = 0
         stale_count = 0
         unknown_count = 0
-        
+
         with ProcessPoolExecutor(max_workers=8) as executor:
             futures = {
                 executor.submit(

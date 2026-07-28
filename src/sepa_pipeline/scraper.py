@@ -278,11 +278,11 @@ class SepaScraper:
                 # that haven't updated their data, while avoiding unzipping all 200MiB.
                 sample_size = min(20, len(inner_zips))
                 sampled_zips = inner_zips[:sample_size]
-                
+
                 valid_count = 0
                 stale_count = 0
                 unknown_count = 0
-                
+
                 logger.info(f"Sampling {sample_size} nested ZIPs for freshness consensus...")
 
                 target_date_str = self.fecha.hoy
@@ -298,10 +298,10 @@ class SepaScraper:
                                 if not comercio_files:
                                     unknown_count += 1
                                     continue
-                                    
+
                                 comercio_filename = comercio_files[0]
                                 date_found = False
-                                
+
                                 # Read comercio.csv block by block
                                 with inner_zf.open(comercio_filename, 'r') as f:
                                     wrapper = io.TextIOWrapper(f, encoding='utf-8-sig', errors='replace')
@@ -311,17 +311,17 @@ class SepaScraper:
                                             if date_match:
                                                 extracted_date_str = date_match.group(1)
                                                 extracted_d = datetime.strptime(extracted_date_str, "%Y-%m-%d").date()
-                                                
+
                                                 date_found = True
                                                 if extracted_d < (target_d - timedelta(days=1)):
                                                     stale_count += 1
                                                 else:
                                                     valid_count += 1
                                                 break # Stop reading this CSV once date is found
-                                                
+
                                 if not date_found:
                                     unknown_count += 1
-                                    
+
                     except Exception as e:
                         logger.warning(f"Failed to parse nested ZIP {inner_zip_name}: {e}")
                         unknown_count += 1
@@ -331,7 +331,7 @@ class SepaScraper:
                     f"Consensus Results -> Valid: {valid_count}, Stale: {stale_count}, "
                     f"Unknown: {unknown_count} (out of {sample_size} sampled)"
                 )
-                
+
                 # We only reject the entire package if we found more definitively stale files than valid ones
                 if stale_count > valid_count:
                     logger.error(
