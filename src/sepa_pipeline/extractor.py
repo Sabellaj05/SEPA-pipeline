@@ -2,6 +2,7 @@
 SEPA Data Extractor
 Handles ZIP file extraction.
 """
+
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date
@@ -14,13 +15,16 @@ from sepa_pipeline.config import SEPAConfig
 
 logger = get_logger(__name__)
 
+
 class SEPAExtractor:
     """Extracts and validates SEPA ZIP files"""
 
     EXPECTED_FILES = {"comercio.csv", "sucursales.csv", "productos.csv"}
 
     @staticmethod
-    def extract_zip(zip_path: Path, extract_to: Path, target_date: date | None = None) -> Tuple[Dict[str, Path], str]:
+    def extract_zip(
+        zip_path: Path, extract_to: Path, target_date: date | None = None
+    ) -> Tuple[Dict[str, Path], str]:
         """Extract a single ZIP file and return paths to CSVs, plus date_status ('valid', 'stale', 'unknown')"""
         logger.info(f"Extracting {zip_path.name}")
 
@@ -45,15 +49,20 @@ class SEPAExtractor:
         if target_date and comercio_path and comercio_path.exists():
             try:
                 from datetime import datetime, timedelta
+
                 target_d = target_date
 
-                with open(comercio_path, "r", encoding="utf-8-sig", errors="replace") as f:
+                with open(
+                    comercio_path, "r", encoding="utf-8-sig", errors="replace"
+                ) as f:
                     for line in f:
                         if "ltima actualizaci" in line.lower():
                             date_match = re.search(r"(\d{4}-\d{2}-\d{2})", line)
                             if date_match:
                                 extracted_date_str = date_match.group(1)
-                                extracted_d = datetime.strptime(extracted_date_str, "%Y-%m-%d").date()
+                                extracted_d = datetime.strptime(
+                                    extracted_date_str, "%Y-%m-%d"
+                                ).date()
 
                                 if extracted_d < (target_d - timedelta(days=1)):
                                     date_status = "stale"
@@ -66,7 +75,9 @@ class SEPAExtractor:
         return csv_paths, date_status
 
     @staticmethod
-    def extract_all_zips(source_dir: Path, target_date: date | None = None) -> Tuple[List[Dict[str, Path]], int, int, int]:
+    def extract_all_zips(
+        source_dir: Path, target_date: date | None = None
+    ) -> Tuple[List[Dict[str, Path]], int, int, int]:
         """
         Extract all ZIP files from a source directory in parallel.
         If target_date is None, source_dir is treated as the directory containing zips.
@@ -77,15 +88,17 @@ class SEPAExtractor:
             if not date_dir.exists():
                 # Allow for the case where source_dir IS the date dir
                 if source_dir.name == target_date.isoformat():
-                     date_dir = source_dir
+                    date_dir = source_dir
                 else:
-                     raise FileNotFoundError(f"No data directory for {target_date} in {source_dir}")
+                    raise FileNotFoundError(
+                        f"No data directory for {target_date} in {source_dir}"
+                    )
         else:
             # Cloud mode: source_dir IS the directory containing zips
             date_dir = source_dir
 
         if not date_dir.exists():
-             raise FileNotFoundError(f"Source directory does not exist: {date_dir}")
+            raise FileNotFoundError(f"Source directory does not exist: {date_dir}")
 
         zip_files = sorted(date_dir.glob("sepa_*.zip"))
         logger.info(f"Found {len(zip_files)} ZIP files in {date_dir}")
@@ -116,7 +129,9 @@ class SEPAExtractor:
                     elif date_status == "unknown":
                         unknown_count += 1
                 except Exception as e:
-                    logger.error(f"Failed to extract {zip_path.name} (file may be corrupted): {e}. Skipping this package.")
+                    logger.error(
+                        f"Failed to extract {zip_path.name} (file may be corrupted): {e}. Skipping this package."
+                    )
                     malformed_zips_count += 1
                     unknown_count += 1
                     continue
@@ -157,7 +172,9 @@ class SEPAExtractor:
         # Note: s3.get_file_info returns a FileInfo object. type == FileType.NotFound if missing.
         file_info = s3.get_file_info(s3_path)
         if file_info.type == fs.FileType.NotFound:
-            logger.warning(f"Data not found in Bronze Layer for {target_date} (Path: {s3_path})")
+            logger.warning(
+                f"Data not found in Bronze Layer for {target_date} (Path: {s3_path})"
+            )
             return None
 
         # Local Temp Path

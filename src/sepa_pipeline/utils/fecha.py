@@ -32,9 +32,9 @@ class Fecha:
             elif isinstance(self._target_date, date) and not isinstance(
                 self._target_date, datetime
             ):
-                return datetime.combine(
-                    self._target_date, datetime.min.time()
-                ).replace(tzinfo=timezone_ar)
+                return datetime.combine(self._target_date, datetime.min.time()).replace(
+                    tzinfo=timezone_ar
+                )
             elif isinstance(self._target_date, datetime):
                 if self._target_date.tzinfo is None:
                     return self._target_date.replace(tzinfo=timezone_ar)

@@ -54,6 +54,7 @@ APP_NAME = "sepa-agent"
 DEFAULT_USER_ID = "local-user"
 DEFAULT_SESSION_ID = "local-session-01"
 _HTTP_PORT = 19121
+_SERVING_HTTP_PORT = 19122
 RESEARCH_AGENT_NAME = "sepa_shopping_researcher"
 FORMATTER_AGENT_NAME = "sepa_shopping_formatter"
 
@@ -116,16 +117,34 @@ def _load_agent_env() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_connection_params() -> (
+def _resolve_serving_connection_params() -> (
     StreamableHTTPConnectionParams | StdioConnectionParams
 ):
-    """Probe for the HTTP MCP server; fall back to a stdio subprocess."""
-    if is_port_open("127.0.0.1", _HTTP_PORT):
-        print(
-            f"Connecting to running Streamable HTTP MCP server on port {_HTTP_PORT}..."
+    """Probe for the serving (product search) HTTP MCP server; fall back to stdio."""
+    if is_port_open("127.0.0.1", _SERVING_HTTP_PORT):
+        print(f"Connecting to serving MCP server on port {_SERVING_HTTP_PORT}...")
+        return StreamableHTTPConnectionParams(
+            url=f"http://127.0.0.1:{_SERVING_HTTP_PORT}/mcp"
         )
+    print("Serving HTTP server offline. Spawning local MCP server via Stdio...")
+    from mcp import StdioServerParameters
+
+    return StdioConnectionParams(
+        server_params=StdioServerParameters(
+            command="uv",
+            args=["run", "python", "-m", "serving_mcp.stdio"],
+        )
+    )
+
+
+def _resolve_lakehouse_connection_params() -> (
+    StreamableHTTPConnectionParams | StdioConnectionParams
+):
+    """Probe for the lakehouse (ops/analytics) HTTP MCP server; fall back to stdio."""
+    if is_port_open("127.0.0.1", _HTTP_PORT):
+        print(f"Connecting to lakehouse MCP server on port {_HTTP_PORT}...")
         return StreamableHTTPConnectionParams(url=f"http://127.0.0.1:{_HTTP_PORT}/mcp")
-    print("HTTP server offline. Spawning local MCP server via Stdio...")
+    print("Lakehouse HTTP server offline. Spawning local MCP server via Stdio...")
     from mcp import StdioServerParameters
 
     return StdioConnectionParams(
@@ -159,8 +178,10 @@ def build_runtime(*, local: bool | None = None) -> Runner:
     configure_langfuse_tracing()
 
     use_local = local if local is not None else LOCAL_ENABLED
-    connection_params = _resolve_connection_params()
-    audit_tools = McpToolset(connection_params=connection_params)
+    serving_tools = McpToolset(
+        connection_params=_resolve_serving_connection_params(),
+        tool_filter=["search_products_tool"],
+    )
 
     model: LiteLlm | str = (
         LiteLlm(
@@ -169,20 +190,28 @@ def build_runtime(*, local: bool | None = None) -> Runner:
             api_key=os.getenv("LOCAL_LLM_API_KEY", "sk-no-key"),
         )
         if use_local
-        else "gemini-2.5-flash"
+        else "gemini-flash-latest"
+    )
+
+    from agent.shopping_prompts import SHOPPING_PLANNER_PROMPT
+
+    planner_agent = Agent(
+        name="sepa_recipe_planner",
+        model="gemini-flash-latest",
+        instruction=SHOPPING_PLANNER_PROMPT,
+        output_key="canonical_shopping_list",
     )
 
     research_agent = Agent(
         name=RESEARCH_AGENT_NAME,
         model=model,
         instruction=SHOPPING_RESEARCH_PROMPT,
-        tools=[audit_tools],
+        tools=[serving_tools],
         output_key="shopping_research",
     )
     formatter_agent = Agent(
         name=FORMATTER_AGENT_NAME,
-        model="gemini-2.5-flash",
-        # model=model,
+        model="gemini-flash-latest",
         instruction=SHOPPING_FORMATTER_PROMPT,
         output_schema=ShoppingList,
         output_key="shopping_list",
@@ -190,7 +219,7 @@ def build_runtime(*, local: bool | None = None) -> Runner:
 
     root_agent = SequentialAgent(
         name="sepa_shopping_assistant",
-        sub_agents=[research_agent, formatter_agent],
+        sub_agents=[planner_agent, research_agent, formatter_agent],
     )
 
     _session_service = InMemorySessionService()

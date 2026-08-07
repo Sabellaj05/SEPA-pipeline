@@ -87,7 +87,7 @@ class TestSepaScraper:
             # Mock Fecha to control the day of the week to a non-matching day
             mock_fecha_instance = Mock()
             mock_fecha_instance.nombre_weekday = "lunes"
-            mock_fecha_instance.hoy = "2024-01-03" # does not match 2024-01-01 or 02
+            mock_fecha_instance.hoy = "2024-01-03"  # does not match 2024-01-01 or 02
             mock_fecha_class.return_value = mock_fecha_instance
 
             async with SepaScraper(
@@ -366,8 +366,12 @@ class TestSepaScraper:
         """Test consensus logic with a predominantly valid ZIP."""
         from .factories import make_sepa_zip
 
-        async with SepaScraper(url=sample_url, data_dir=str(sample_data_dir), target_date="2026-01-15") as scraper:
-            zip_bytes = make_sepa_zip(target_date="2026-01-15", n_nested_zips=3, stale_majority=False)
+        async with SepaScraper(
+            url=sample_url, data_dir=str(sample_data_dir), target_date="2026-01-15"
+        ) as scraper:
+            zip_bytes = make_sepa_zip(
+                target_date="2026-01-15", n_nested_zips=3, stale_majority=False
+            )
             zip_path = sample_data_dir / "sepa_valid_consensus.zip"
             zip_path.write_bytes(zip_bytes)
 
@@ -379,12 +383,15 @@ class TestSepaScraper:
         """Test consensus logic with a predominantly stale ZIP."""
         from .factories import make_sepa_zip
 
-        async with SepaScraper(url=sample_url, data_dir=str(sample_data_dir), target_date="2026-01-15") as scraper:
+        async with SepaScraper(
+            url=sample_url, data_dir=str(sample_data_dir), target_date="2026-01-15"
+        ) as scraper:
             # Build a ZIP where the majority of nested ZIPs have stale dates
-            zip_bytes = make_sepa_zip(target_date="2026-01-15", n_nested_zips=5, stale_majority=True)
+            zip_bytes = make_sepa_zip(
+                target_date="2026-01-15", n_nested_zips=5, stale_majority=True
+            )
             zip_path = sample_data_dir / "sepa_stale_consensus.zip"
             zip_path.write_bytes(zip_bytes)
 
             result = scraper._validate_zip_date(zip_path)
             assert result is False
-
