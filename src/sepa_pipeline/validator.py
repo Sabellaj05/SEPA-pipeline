@@ -106,7 +106,9 @@ class SEPAValidator:
         all_sucursales: list[pl.DataFrame] = []
 
         for idx, csv_paths in enumerate(all_csv_paths):
-            logger.info(f"Dimensions scan: processing file {idx + 1}/{len(all_csv_paths)}")
+            logger.info(
+                f"Dimensions scan: processing file {idx + 1}/{len(all_csv_paths)}"
+            )
 
             try:
                 df_comercio = self._read_csv(csv_paths["comercio"], comercio_schema)
@@ -114,7 +116,9 @@ class SEPAValidator:
                 if df_comercio.height > 0:
                     all_comercios.append(df_comercio)
             except Exception as e:
-                logger.warning(f"Failed to read/validate comercio {csv_paths['comercio']}: {e}")
+                logger.warning(
+                    f"Failed to read/validate comercio {csv_paths['comercio']}: {e}"
+                )
 
             try:
                 df_sucursal = self._read_csv(csv_paths["sucursales"], sucursales_schema)
@@ -122,7 +126,9 @@ class SEPAValidator:
                 if df_sucursal.height > 0:
                     all_sucursales.append(df_sucursal)
             except Exception as e:
-                logger.warning(f"Failed to read/validate sucursales {csv_paths['sucursales']}: {e}")
+                logger.warning(
+                    f"Failed to read/validate sucursales {csv_paths['sucursales']}: {e}"
+                )
 
         logger.info("Concatenating dimensions...")
         df_comercios = (
@@ -166,7 +172,9 @@ class SEPAValidator:
             _, df = self.validate_referential_integrity(df_comercios, df_sucursales, df)
             return df
         except Exception as e:
-            logger.warning(f"Failed to read/validate productos {csv_paths['productos']}: {e}")
+            logger.warning(
+                f"Failed to read/validate productos {csv_paths['productos']}: {e}"
+            )
             return pl.DataFrame(schema=productos_schema)
 
     @staticmethod
@@ -513,7 +521,9 @@ class SEPAValidator:
                     on=["id_comercio", "id_bandera", "id_sucursal"],
                     how="semi",
                 )
-                self._drops["integrity_dropped"] += before_integrity - df_productos.height
+                self._drops["integrity_dropped"] += (
+                    before_integrity - df_productos.height
+                )
         else:
             logger.debug("No products/sucursal keys to compare (one side empty)")
 

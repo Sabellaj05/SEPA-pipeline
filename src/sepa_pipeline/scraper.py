@@ -255,7 +255,7 @@ class SepaScraper:
             return False
         except Exception as e:
             logger.error(f"Unexpected error downloading the file: {e}")
-            if 'file_path' in locals() and file_path and file_path.exists():
+            if "file_path" in locals() and file_path and file_path.exists():
                 file_path.unlink(missing_ok=True)
             return False
 
@@ -265,13 +265,17 @@ class SepaScraper:
         Samples up to 20 nested zips to determine if the overall package is fresh
         based on a majority vote.
         """
-        logger.info("Performing intrinsic date validation inside downloaded Master ZIP...")
+        logger.info(
+            "Performing intrinsic date validation inside downloaded Master ZIP..."
+        )
         try:
-            with zipfile.ZipFile(zip_path, 'r') as master_zf:
-                inner_zips = [f for f in master_zf.namelist() if f.endswith('.zip')]
+            with zipfile.ZipFile(zip_path, "r") as master_zf:
+                inner_zips = [f for f in master_zf.namelist() if f.endswith(".zip")]
 
                 if not inner_zips:
-                    logger.warning("No nested '.zip' files found inside Master ZIP to validate date.")
+                    logger.warning(
+                        "No nested '.zip' files found inside Master ZIP to validate date."
+                    )
                     return True  # Fail open if structure unexpected
 
                 # Sample up to 20 nested zips to avoid false negatives from single stores
@@ -283,18 +287,27 @@ class SepaScraper:
                 stale_count = 0
                 unknown_count = 0
 
-                logger.info(f"Sampling {sample_size} nested ZIPs for freshness consensus...")
+                logger.info(
+                    f"Sampling {sample_size} nested ZIPs for freshness consensus..."
+                )
 
                 target_date_str = self.fecha.hoy
                 from datetime import datetime, timedelta
+
                 target_d = datetime.strptime(target_date_str, "%Y-%m-%d").date()
 
                 for inner_zip_name in sampled_zips:
                     # Open the inner ZIP in memory
                     try:
-                        with master_zf.open(inner_zip_name, 'r') as inner_file:
-                            with zipfile.ZipFile(io.BytesIO(inner_file.read())) as inner_zf:
-                                comercio_files = [f for f in inner_zf.namelist() if f.endswith('comercio.csv')]
+                        with master_zf.open(inner_zip_name, "r") as inner_file:
+                            with zipfile.ZipFile(
+                                io.BytesIO(inner_file.read())
+                            ) as inner_zf:
+                                comercio_files = [
+                                    f
+                                    for f in inner_zf.namelist()
+                                    if f.endswith("comercio.csv")
+                                ]
                                 if not comercio_files:
                                     unknown_count += 1
                                     continue
@@ -303,27 +316,37 @@ class SepaScraper:
                                 date_found = False
 
                                 # Read comercio.csv block by block
-                                with inner_zf.open(comercio_filename, 'r') as f:
-                                    wrapper = io.TextIOWrapper(f, encoding='utf-8-sig', errors='replace')
+                                with inner_zf.open(comercio_filename, "r") as f:
+                                    wrapper = io.TextIOWrapper(
+                                        f, encoding="utf-8-sig", errors="replace"
+                                    )
                                     for line in wrapper:
                                         if "ltima actualizaci" in line.lower():
-                                            date_match = re.search(r"(\d{4}-\d{2}-\d{2})", line)
+                                            date_match = re.search(
+                                                r"(\d{4}-\d{2}-\d{2})", line
+                                            )
                                             if date_match:
                                                 extracted_date_str = date_match.group(1)
-                                                extracted_d = datetime.strptime(extracted_date_str, "%Y-%m-%d").date()
+                                                extracted_d = datetime.strptime(
+                                                    extracted_date_str, "%Y-%m-%d"
+                                                ).date()
 
                                                 date_found = True
-                                                if extracted_d < (target_d - timedelta(days=1)):
+                                                if extracted_d < (
+                                                    target_d - timedelta(days=1)
+                                                ):
                                                     stale_count += 1
                                                 else:
                                                     valid_count += 1
-                                                break # Stop reading this CSV once date is found
+                                                break  # Stop reading this CSV once date is found
 
                                 if not date_found:
                                     unknown_count += 1
 
                     except Exception as e:
-                        logger.warning(f"Failed to parse nested ZIP {inner_zip_name}: {e}")
+                        logger.warning(
+                            f"Failed to parse nested ZIP {inner_zip_name}: {e}"
+                        )
                         unknown_count += 1
 
                 # Evaluate Consensus
