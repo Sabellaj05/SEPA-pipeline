@@ -1,125 +1,110 @@
 services:
-  # postgres:
-  #   image: postgres:16-alpine
-  #   container_name: sepa_postgres
-  #   environment:
-  #     POSTGRES_USER: ${POSTGRES_USER}
-  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-  #     POSTGRES_DB: ${POSTGRES_DB}
-  #   volumes:
-  #     - sepa_pgdata:/var/lib/postgresql/data
-  #     - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
-  #   ports:
-  #     - ${POSTGRES_PORT}:5432
-  #   restart: unless-stopped
+  postgres:
+    image: postgres:16-alpine
+    container_name: sepa_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-polaris}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-polaris}
+      POSTGRES_DB: ${POSTGRES_DB:-polaris}
+    volumes:
+      - sepa_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - sepa_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-polaris} -d ${POSTGRES_DB:-polaris}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
-  #postgres_test:
-  #  image: postgres:16-alpine
-  #  container_name: sepa_postgres_test
-  #  environment:
-  #    POSTGRES_USER: ${TEST_POSTGRES_USER}
-  #    POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD}
-  #    POSTGRES_DB: ${TEST_POSTGRES_DB}
-  #  volumes:
-  #    - sepa_pgdata_test:/var/lib/postgresql/data
-  #    - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
-  #  ports:
-  #    - ${TEST_POSTGRES_PORT}:5432
-  #  restart: unless-stopped
-
-  # pgadmin:
-  #     image: dpage/pgadmin4:latest
-  #     environment:
-  #       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
-  #       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
-  #     ports:
-  #       - "8080:80" # Expose pgAdmin port to the host (e.g., 8080)
-  #     depends_on:
-  #       - postgres
-  #    - postgres_test
-
-  minio:
-    container_name: sepa_minio
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z # pin a recent stable tag
+  rustfs:
+    container_name: sepa_rustfs
+    image: rustfs/rustfs:latest
+    user: "0:0"
     ports:
       - "9000:9000" # S3 API
       - "9001:9001" # Web console
     environment:
-      MINIO_ROOT_USER: ${MINIO_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+      RUSTFS_ADDRESS: "0.0.0.0:9000"
+      RUSTFS_CONSOLE_ADDRESS: "0.0.0.0:9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-${MINIO_ACCESS_KEY:-Kwn71UgAjh*S6vweReK}}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-${MINIO_SECRET_KEY:-!3ceZSXWfDKp#q*^y%ck}}
+      RUSTFS_VOLUMES: /data/rustfs
     volumes:
-      - minio_data:/data
-    command: server /data --console-address ":9001"
+      - rustfs_data:/data/rustfs
     networks:
       sepa_net:
         ipv4_address: 172.20.0.10
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 15s
       timeout: 5s
       retries: 10
       start_period: 10s
-  createbuckets:
-    image: minio/mc
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_USER: ${MINIO_USER}
-      MINIO_PASSWORD: ${MINIO_PASSWORD}
-      MINIO_BUCKET: ${MINIO_BUCKET}
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
-    entrypoint: >
-      /bin/sh -c "
-      echo 'Waiting for MinIO at http://minio:9000...';
-      mc alias set myminio http://minio:9000 ${MINIO_USER} ${MINIO_PASSWORD};
-      mc mb --ignore-existing myminio/${MINIO_BUCKET} || true;
-      mc policy set public myminio/${MINIO_BUCKET};
-      echo 'Bucket ${MINIO_BUCKET} is ready and public';
 
-      echo 'Creating dedicated pipeline user...';
-      mc admin user add myminio ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY};
-      mc admin policy attach myminio readwrite --user ${MINIO_ACCESS_KEY};
-      
-      echo 'setup complete';
-      "
+  polaris-init:
+    image: apache/polaris-admin-tool:latest
+    container_name: sepa_polaris_init
+    command: bootstrap -r default -c default,${POLARIS_CLIENT_ID:-polaris},${POLARIS_CLIENT_SECRET:-polaris}
+    environment:
+      - polaris.persistence.type=relational-jdbc
+      - quarkus.datasource.db-kind=postgresql
+      - quarkus.datasource.jdbc.url=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-polaris}
+      - quarkus.datasource.username=${POSTGRES_USER:-polaris}
+      - quarkus.datasource.password=${POSTGRES_PASSWORD:-polaris}
     networks:
       - sepa_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
-  nessie:
-    image: ghcr.io/projectnessie/nessie:latest
-    container_name: sepa_nessie
+  polaris:
+    image: apache/polaris:latest
+    container_name: sepa_polaris
     ports:
-      - "19120:19120"
+      - "8181:8181"
+      - "8182:8182"
     environment:
-      - NESSIE_VERSION_STORE_TYPE=ROCKSDB
-      - NESSIE_VERSION_STORE_PERSIST_ROCKS_DATABASE_PATH=/data/nessie-rocksdb
-      - NESSIE_CATALOG_DEFAULT_WAREHOUSE=warehouse
-      - NESSIE_CATALOG_WAREHOUSES_WAREHOUSE_LOCATION=s3://${MINIO_BUCKET}/silver/iceberg
-      # Use MinIO's static IP — accessible from host OS and all containers alike.
-      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_ENDPOINT=http://172.20.0.10:9000
-      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_PATH_STYLE_ACCESS=true
-      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_AUTH_TYPE=STATIC
-      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_AUTHENTICATION_TYPE=STATIC
-      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_REGION=us-east-1
       - AWS_REGION=us-east-1
-      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_ACCESS_KEY=urn:nessie-secret:quarkus:nessie.minio.auth
-      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_SECRET_KEY=urn:nessie-secret:quarkus:nessie.minio.auth
-      - NESSIE_MINIO_AUTH_NAME=${MINIO_ACCESS_KEY}
-      - NESSIE_MINIO_AUTH_SECRET=${MINIO_SECRET_KEY}
+      - AWS_ACCESS_KEY_ID=${RUSTFS_ACCESS_KEY:-${MINIO_ACCESS_KEY:-Kwn71UgAjh*S6vweReK}}
+      - AWS_SECRET_ACCESS_KEY=${RUSTFS_SECRET_KEY:-${MINIO_SECRET_KEY:-!3ceZSXWfDKp#q*^y%ck}}
+      - AWS_ENDPOINT_URL=http://172.20.0.10:9000
+      - POLARIS_BOOTSTRAP_CREDENTIALS=default,${POLARIS_CLIENT_ID:-polaris},${POLARIS_CLIENT_SECRET:-polaris}
+      - polaris.realm-context.realms=${POLARIS_REALM:-default}
+      - polaris.features.ALLOW_SETTING_S3_ENDPOINTS=true
+      - polaris.persistence.type=relational-jdbc
+      - quarkus.datasource.db-kind=postgresql
+      - quarkus.datasource.jdbc.url=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-polaris}
+      - quarkus.datasource.username=${POSTGRES_USER:-polaris}
+      - quarkus.datasource.password=${POSTGRES_PASSWORD:-polaris}
+      - quarkus.flyway.migrate-at-start=true
+      - quarkus.otel.sdk.disabled=true
     volumes:
-      - nessie_data:/data/nessie-rocksdb
+      - polaris_data:/data/polaris
     networks:
       - sepa_net
       - default
+    depends_on:
+      postgres:
+        condition: service_healthy
+      polaris-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8182/q/health"]
+      interval: 2s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
 
 volumes:
   sepa_pgdata:
   sepa_pgdata_test:
-  minio_data:
-  nessie_data:
+  rustfs_data:
+  polaris_data:
 
 networks:
   sepa_net:
