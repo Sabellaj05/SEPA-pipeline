@@ -83,6 +83,7 @@ services:
       - quarkus.datasource.password=${POSTGRES_PASSWORD:-polaris}
       - quarkus.flyway.migrate-at-start=true
       - quarkus.otel.sdk.disabled=true
+      - JAVA_OPTIONS=-Xms128m -Xmx512m
     volumes:
       - polaris_data:/data/polaris
     networks:

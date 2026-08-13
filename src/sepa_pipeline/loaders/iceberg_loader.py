@@ -1,6 +1,8 @@
+import gc
 from datetime import date, datetime
 
 import polars as pl
+import pyarrow as pa
 from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.exceptions import NamespaceAlreadyExistsError, NoSuchTableError
 from pyiceberg.expressions import EqualTo
@@ -85,7 +87,7 @@ class IcebergLoader(BaseLoader):
         except Exception as e:
             logger.warning(f"[ICEBERG] Failed to cleanup {identifier}: {e}")
 
-    def _ensure_iceberg_table(self, df: pl.DataFrame) -> None:
+    def _ensure_iceberg_table(self, data: pl.DataFrame | pa.Table) -> None:
         """Ensure the Iceberg table exists, creating it if necessary."""
         if self._iceberg_table:
             return
@@ -106,7 +108,9 @@ class IcebergLoader(BaseLoader):
                 f"[ICEBERG] Iceberg table {self._table_identifier} not found, creating from schema..."
             )
 
-            arrow_table = df.to_arrow()
+            arrow_schema = (
+                data.schema if isinstance(data, pa.Table) else data.to_arrow().schema
+            )
 
             # Create namespace if it doesn't exist
             try:
@@ -117,7 +121,7 @@ class IcebergLoader(BaseLoader):
             # 1. Create unpartitioned table first
             self._iceberg_table = self.catalog.create_table(
                 self._table_identifier,
-                schema=arrow_table.schema,
+                schema=arrow_schema,
             )
             logger.info(
                 f"[ICEBERG] Created base Iceberg table: {self._table_identifier}"
@@ -155,26 +159,31 @@ class IcebergLoader(BaseLoader):
             df = df.with_columns(cols_to_add)
         return df
 
-    def _append_precios(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
+    def _append_precios(
+        self, data: pl.DataFrame | pa.Table, fecha_vigencia: date
+    ) -> None:
         """Write one buffered chunk to the fact table (one data-file batch)."""
-        if df.is_empty():
+        if len(data) == 0:
             return
-        self._ensure_iceberg_table(df)
+        self._ensure_iceberg_table(data)
         if not self._iceberg_table:
             logger.error(
                 "[ICEBERG] Failed to load/create Iceberg table, skipping append"
             )
             return
-        logger.info(f"[ICEBERG] Appending {len(df):,} rows to Iceberg table...")
-        self._iceberg_table.append(df.to_arrow())
-        self.log_success(fecha_vigencia, len(df))
+        arrow_table = data if isinstance(data, pa.Table) else data.to_arrow()
+        logger.info(
+            f"[ICEBERG] Appending {len(arrow_table):,} rows to Iceberg table..."
+        )
+        self._iceberg_table.append(arrow_table)
+        self.log_success(fecha_vigencia, len(arrow_table))
 
     def load(self, df: pl.DataFrame, fecha_vigencia: date) -> None:
         """
         Buffer a precios chunk and append when the target row count is reached.
 
-        Buffering produces fewer, larger data files than per-batch appends while
-        still avoiding a full-day in-memory materialization.
+        Converts to PyArrow table immediately to avoid duplicating large Polars
+        DataFrames during buffer concatenation.
         """
         if not self.catalog:
             logger.warning(
@@ -185,8 +194,11 @@ class IcebergLoader(BaseLoader):
             return
 
         df = self._prepare_precios_df(df, fecha_vigencia)
-        self._precios_buffer.append(df)
-        self._precios_buffer_rows += len(df)
+        arrow_chunk = df.to_arrow()
+        del df
+
+        self._precios_buffer.append(arrow_chunk)
+        self._precios_buffer_rows += len(arrow_chunk)
 
         if self._precios_buffer_rows >= self._precios_append_target_rows:
             self.flush(fecha_vigencia)
@@ -194,23 +206,35 @@ class IcebergLoader(BaseLoader):
     def flush(self, fecha_vigencia: date) -> None:
         """Append any remaining buffered fact and dimension rows."""
         if self._precios_buffer:
-            combined = pl.concat(self._precios_buffer)
+            tables = [
+                t if isinstance(t, pa.Table) else t.to_arrow()
+                for t in self._precios_buffer
+            ]
+            combined = pa.concat_tables(tables)
             self._precios_buffer.clear()
             self._precios_buffer_rows = 0
             self._append_precios(combined, fecha_vigencia)
+            del combined
+            gc.collect()
 
         if self._productos_buffer:
-            combined_prod = pl.concat(self._productos_buffer)
+            tables = [
+                t if isinstance(t, pa.Table) else t.to_arrow()
+                for t in self._productos_buffer
+            ]
+            combined_prod = pa.concat_tables(tables)
             self._productos_buffer.clear()
             table = self._ensure_dimension_table("dim_productos", combined_prod)
             if table:
                 logger.info(
                     f"[ICEBERG] Appending {len(combined_prod):,} rows to dim_productos..."
                 )
-                table.append(combined_prod.to_arrow())
+                table.append(combined_prod)
+            del combined_prod
+            gc.collect()
 
     def _ensure_dimension_table(
-        self, table_name: str, df: pl.DataFrame
+        self, table_name: str, data: pl.DataFrame | pa.Table
     ) -> Table | None:
         if not self.catalog:
             return None
@@ -229,7 +253,9 @@ class IcebergLoader(BaseLoader):
             return table
         except NoSuchTableError:
             logger.info(f"[ICEBERG] Creating dimension table {identifier}...")
-            arrow_table = df.to_arrow()
+            arrow_schema = (
+                data.schema if isinstance(data, pa.Table) else data.to_arrow().schema
+            )
             try:
                 self.catalog.create_namespace("sepa")
             except NamespaceAlreadyExistsError:
@@ -238,7 +264,7 @@ class IcebergLoader(BaseLoader):
             try:
                 # Dimensions are intentionally unpartitioned — they are small snapshot
                 # tables and don't benefit from date partitioning.
-                table = self.catalog.create_table(identifier, schema=arrow_table.schema)
+                table = self.catalog.create_table(identifier, schema=arrow_schema)
                 # Ensure format version 2
                 with table.transaction() as tx:
                     tx.set_properties({"format-version": "2"})
@@ -284,9 +310,12 @@ class IcebergLoader(BaseLoader):
         df_unique = df.unique(subset=["id_producto"])
 
         # Filter out products we've already seen today
-        new_products = df_unique.filter(
-            ~pl.col("id_producto").is_in(list(self._seen_productos))
-        )
+        if self._seen_productos:
+            new_products = df_unique.filter(
+                ~pl.col("id_producto").is_in(list(self._seen_productos))
+            )
+        else:
+            new_products = df_unique
 
         if new_products.is_empty():
             logger.debug(
@@ -299,4 +328,6 @@ class IcebergLoader(BaseLoader):
         self._seen_productos.update(new_ids)
 
         new_products = self._prepare_dim_df(new_products, fecha_vigencia)
-        self._productos_buffer.append(new_products)
+        arrow_prod = new_products.to_arrow()
+        del new_products
+        self._productos_buffer.append(arrow_prod)

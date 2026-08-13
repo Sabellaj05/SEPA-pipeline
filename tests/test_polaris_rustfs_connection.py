@@ -1,5 +1,4 @@
 import boto3
-import pytest
 from pyiceberg.catalog import load_catalog
 
 from sepa_pipeline.config import SEPAConfig
