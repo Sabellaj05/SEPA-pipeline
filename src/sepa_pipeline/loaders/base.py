@@ -3,6 +3,7 @@ from datetime import date
 
 import polars as pl
 
+import pyarrow as pa
 from sepa_pipeline.utils.logger import get_logger
 
 from ..config import SEPAConfig
@@ -32,10 +33,10 @@ class BaseLoader(ABC):
         """
         self.config = config
         self.stage_name = self.__class__.__name__
-        self._precios_buffer: list[pl.DataFrame] = []
+        self._precios_buffer: list[pa.Table | pl.DataFrame] = []
         self._precios_buffer_rows: int = 0
         self._precios_append_target_rows: int = PRECIOS_APPEND_TARGET_ROWS
-        self._productos_buffer: list[pl.DataFrame] = []
+        self._productos_buffer: list[pa.Table | pl.DataFrame] = []
 
     @abstractmethod
     def setup(self, fecha_vigencia: date) -> None:

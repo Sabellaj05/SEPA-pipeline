@@ -2,5 +2,5 @@
 
 SELECT
     1 as id,
-    'Hello BigQuery' as message,
-    current_timestamp() as created_at
+    'Hello SEPA' as message,
+    now() as created_at
