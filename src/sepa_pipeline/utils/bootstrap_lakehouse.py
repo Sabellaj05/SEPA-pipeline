@@ -1,6 +1,7 @@
 import os
 
 import boto3
+import requests
 from botocore.exceptions import ClientError
 from pyiceberg.catalog import load_catalog
 from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
@@ -20,11 +21,104 @@ s3_client = boto3.client(
 )
 
 
+def ensure_polaris_catalog() -> None:
+    """Ensure catalog 'default' exists in Apache Polaris."""
+    polaris_uri = config.polaris_uri or "http://localhost:8181/api/catalog"
+    realm = config.polaris_realm or "default"
+    client_id = config.polaris_client_id or "polaris"
+    client_secret = config.polaris_client_secret or "polaris"
+    bucket = config.minio_bucket or "sepa-lakehouse"
+    warehouse_loc = f"s3://{bucket}/silver/iceberg"
+
+    base_url = polaris_uri.rstrip("/").removesuffix("/v1")
+    token_url = f"{base_url}/v1/oauth/tokens"
+    mgmt_url = f"{base_url.removesuffix('/catalog')}/management/v1/catalogs"
+
+    try:
+        token_res = requests.post(
+            token_url,
+            headers={"Polaris-Realm": realm},
+            data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scope": "PRINCIPAL_ROLE:ALL",
+            },
+            timeout=10,
+        )
+        if not token_res.ok:
+            logger.warning(
+                f"Failed to fetch Polaris token for bootstrap: {token_res.text}"
+            )
+            return
+        token = token_res.json().get("access_token")
+
+        cat_res = requests.post(
+            mgmt_url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Polaris-Realm": realm,
+                "Content-Type": "application/json",
+            },
+            json={
+                "catalog": {
+                    "name": "default",
+                    "type": "INTERNAL",
+                    "readOnly": False,
+                    "properties": {"default-base-location": warehouse_loc},
+                    "storageConfigInfo": {
+                        "storageType": "S3",
+                        "allowedLocations": [warehouse_loc],
+                        "stsUnavailable": True,
+                    },
+                }
+            },
+            timeout=10,
+        )
+        if cat_res.status_code in (200, 201):
+            logger.info("Created catalog 'default' in Apache Polaris.")
+        elif cat_res.status_code in (400, 409):
+            logger.info("Catalog 'default' already exists in Apache Polaris.")
+        else:
+            logger.warning(
+                f"Polaris catalog setup status {cat_res.status_code}: {cat_res.text}"
+            )
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Polaris-Realm": realm,
+            "Content-Type": "application/json",
+        }
+        # Create catalog role and assign CATALOG_MANAGE_CONTENT
+        requests.post(
+            f"{mgmt_url}/default/catalog-roles",
+            headers=headers,
+            json={"catalogRole": {"name": "catalog_admin"}},
+            timeout=10,
+        )
+        requests.put(
+            f"{mgmt_url}/default/catalog-roles/catalog_admin/grants",
+            headers=headers,
+            json={"type": "catalog", "privilege": "CATALOG_MANAGE_CONTENT"},
+            timeout=10,
+        )
+        mgmt_base = mgmt_url.removesuffix("/catalogs")
+        requests.put(
+            f"{mgmt_base}/principal-roles/service_admin/catalog-roles/default",
+            headers=headers,
+            json={"catalogRole": {"name": "catalog_admin"}},
+            timeout=10,
+        )
+    except Exception as e:
+        logger.warning(f"Could not bootstrap Polaris catalog: {e}")
+
+
 def bootstrap_lakehouse(local_dir: str | None = None) -> None:
     """
-    Bootstraps the MinIO Lakehouse by creating the main bucket.
+    Bootstraps the RustFS Lakehouse by creating the main bucket.
     Optionally uploads files from a directory to the Bronze layer with Hive-style partitioning.
     """
+    ensure_polaris_catalog()
 
     # Initialize S3 Client
 
@@ -93,12 +187,10 @@ def bootstrap_lakehouse(local_dir: str | None = None) -> None:
 
 def teardown_silver_tables() -> None:
     """
-    Drop all silver Iceberg tables from Nessie and delete all underlying S3 data.
+    Drop all silver Iceberg tables from Polaris REST Catalog and delete all underlying S3 data.
 
-    Nessie does not purge S3 files when dropping tables, so orphaned UUID-suffixed
-    directories accumulate in MinIO. This function handles both sides: drops the
-    catalog entries from Nessie, then deletes everything under silver/iceberg/sepa/
-    in MinIO — which covers all UUID variants regardless of how many rebuild cycles
+    Drops the catalog entries from Polaris, then deletes everything under silver/iceberg/sepa/
+    in RustFS — which covers all UUID variants regardless of how many rebuild cycles
     have run.
     """
     catalog = load_catalog("default")
@@ -179,7 +271,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--teardown-silver",
         action="store_true",
-        help="Drop all silver Iceberg tables from Nessie before bootstrapping. "
+        help="Drop all silver Iceberg tables from Polaris before bootstrapping. "
         "Use this to rebuild silver with corrected table locations/partition specs.",
     )
     args = parser.parse_args()

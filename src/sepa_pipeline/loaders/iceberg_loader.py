@@ -14,13 +14,10 @@ from .base import BaseLoader
 
 logger = get_logger(__name__)
 
-# S3_ENDPOINT key as used by PyIceberg's FsspecFileIO
-_S3_ENDPOINT_KEY = "s3.endpoint"
-
 
 class IcebergLoader(BaseLoader):
     """
-    Loader for Apache Iceberg tables stored in S3/MinIO using PyIceberg.
+    Loader for Apache Iceberg tables stored in S3/RustFS using PyIceberg.
     """
 
     def __init__(self, config: SEPAConfig):
@@ -35,30 +32,6 @@ class IcebergLoader(BaseLoader):
             logger.warning(f"Failed to initialize Iceberg Catalog: {e}")
             self.catalog = None
 
-    def _fix_io_endpoint(self, table: Table) -> None:
-        """Override the S3 endpoint Nessie pushes into the table's FileIO properties.
-
-        Nessie is configured to use 'http://minio:9000' internally (Docker network).
-        It embeds this into the Iceberg REST catalog response as an 'override', so
-        PyIceberg's FsspecFileIO picks it up. From the host OS, 'minio' is not
-        resolvable, so this method patches the endpoint to 'localhost:9000' BEFORE
-        the first file operation, so the per-thread filesystem cache is built
-        with the correct URL.
-        """
-        s3_endpoint = self.config.minio_endpoint  # e.g. http://localhost:9000
-        if hasattr(table, "_io") and hasattr(table._io, "properties"):
-            if table._io.properties.get(_S3_ENDPOINT_KEY) != s3_endpoint:
-                table._io.properties[_S3_ENDPOINT_KEY] = s3_endpoint
-                # Clear the per-thread lru_cache so the next filesystem access
-                # re-creates the S3FileSystem with the corrected endpoint.
-                if hasattr(table._io, "_thread_locals") and hasattr(
-                    table._io._thread_locals, "get_fs_cached"
-                ):
-                    table._io._thread_locals.get_fs_cached.cache_clear()
-                logger.debug(
-                    f"[ICEBERG] Overrode s3.endpoint to {s3_endpoint} for host-side FileIO"
-                )
-
     def setup(self, fecha_vigencia: date) -> None:
         """
         Delete all data for a specific date partition to ensure idempotency.
@@ -72,7 +45,6 @@ class IcebergLoader(BaseLoader):
         if not self._iceberg_table:
             try:
                 self._iceberg_table = self.catalog.load_table(self._table_identifier)
-                self._fix_io_endpoint(self._iceberg_table)
             except NoSuchTableError:
                 logger.info(
                     f"Table {self._table_identifier} does not exist, skipping cleanup."
@@ -106,7 +78,6 @@ class IcebergLoader(BaseLoader):
         identifier = f"sepa.{table_name}"
         try:
             table = self.catalog.load_table(identifier)
-            self._fix_io_endpoint(table)
             table.delete(delete_filter=EqualTo("fecha_vigencia", fecha_vigencia))
             logger.info(f"[ICEBERG] Cleanup complete for {identifier}.")
         except NoSuchTableError:
@@ -127,7 +98,6 @@ class IcebergLoader(BaseLoader):
 
         try:
             self._iceberg_table = self.catalog.load_table(self._table_identifier)
-            self._fix_io_endpoint(self._iceberg_table)
             logger.info(
                 f"[ICEBERG] Loaded existing Iceberg table: {self._table_identifier}"
             )
@@ -149,7 +119,6 @@ class IcebergLoader(BaseLoader):
                 self._table_identifier,
                 schema=arrow_table.schema,
             )
-            self._fix_io_endpoint(self._iceberg_table)
             logger.info(
                 f"[ICEBERG] Created base Iceberg table: {self._table_identifier}"
             )
@@ -252,7 +221,6 @@ class IcebergLoader(BaseLoader):
 
         try:
             table = self.catalog.load_table(identifier)
-            self._fix_io_endpoint(table)
             self._dim_tables[identifier] = table
             # Upgrade existing table to format version 2 if needed
             if str(table.properties.get("format-version", "1")) == "1":
@@ -271,7 +239,6 @@ class IcebergLoader(BaseLoader):
                 # Dimensions are intentionally unpartitioned — they are small snapshot
                 # tables and don't benefit from date partitioning.
                 table = self.catalog.create_table(identifier, schema=arrow_table.schema)
-                self._fix_io_endpoint(table)
                 # Ensure format version 2
                 with table.transaction() as tx:
                     tx.set_properties({"format-version": "2"})

@@ -71,24 +71,12 @@ class SEPAAuditWriter:
             logger.warning(f"[AUDIT] Failed to initialize Iceberg catalog: {e}")
             self.catalog = None
 
-    def _fix_io_endpoint(self, table: object) -> None:
-        """Patch S3 endpoint for host-side access (same as IcebergLoader)."""
-        s3_endpoint = self.config.minio_endpoint
-        if hasattr(table, "_io") and hasattr(table._io, "properties"):
-            if table._io.properties.get("s3.endpoint") != s3_endpoint:
-                table._io.properties["s3.endpoint"] = s3_endpoint
-                if hasattr(table._io, "_thread_locals") and hasattr(
-                    table._io._thread_locals, "get_fs_cached"
-                ):
-                    table._io._thread_locals.get_fs_cached.cache_clear()
-
     def _ensure_table(self, table_id: str, schema: pa.Schema) -> object | None:
         if not self.catalog:
             return None
 
         try:
             table = self.catalog.load_table(table_id)
-            self._fix_io_endpoint(table)
             return table
         except NoSuchTableError:
             logger.info(f"[AUDIT] Creating {table_id}...")
@@ -98,7 +86,6 @@ class SEPAAuditWriter:
                 pass
 
             table = self.catalog.create_table(table_id, schema=schema)
-            self._fix_io_endpoint(table)
             return table
 
     def write_bronze(

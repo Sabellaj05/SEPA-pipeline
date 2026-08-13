@@ -224,9 +224,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--catalog",
-        choices=["nessie", "bigquery"],
-        default="nessie",
-        help="Catalog to verify against (default: nessie)",
+        choices=["polaris", "bigquery"],
+        default="polaris",
+        help="Catalog to verify against (default: polaris)",
     )
     args = parser.parse_args()
 
