@@ -1,20 +1,21 @@
 """
-Audit Tables — Tracks ingestion and validation metadata in Iceberg via Nessie.
+Audit Tables — Tracks ingestion and validation metadata in Iceberg via Polaris/Nessie.
 
 Table: sepa.audit_bronze (unpartitioned, append-only)
 Tracks per-date, per-table-type stats for CSV and Parquet building.
 
 Table: sepa.audit_silver (unpartitioned, append-only)
-Tracks per-date silver validation drop stats and load counts.
+Tracks per-date silver validation drop stats, load counts, and system resource metrics.
 """
 
 from datetime import date, datetime
-from typing import Dict
+from typing import Any, Dict
 
 import polars as pl
 import pyarrow as pa
 from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.exceptions import NamespaceAlreadyExistsError, NoSuchTableError
+from pyiceberg.table import Table
 
 from sepa_pipeline.config import SEPAConfig
 from sepa_pipeline.utils.logger import get_logger
@@ -45,6 +46,8 @@ SILVER_AUDIT_SCHEMA = pa.schema(
         pa.field("integrity_dropped", pa.int64()),
         pa.field("negative_price_count", pa.int64()),
         pa.field("silver_loaded", pa.int64()),
+        pa.field("peak_memory_mb", pa.float64()),
+        pa.field("duration_seconds", pa.float64()),
         pa.field("ingested_at", pa.timestamp("us")),
     ]
 )
@@ -71,24 +74,32 @@ class SEPAAuditWriter:
             logger.warning(f"[AUDIT] Failed to initialize Iceberg catalog: {e}")
             self.catalog = None
 
-    def _fix_io_endpoint(self, table: object) -> None:
-        """Patch S3 endpoint for host-side access (same as IcebergLoader)."""
-        s3_endpoint = self.config.minio_endpoint
-        if hasattr(table, "_io") and hasattr(table._io, "properties"):
-            if table._io.properties.get("s3.endpoint") != s3_endpoint:
-                table._io.properties["s3.endpoint"] = s3_endpoint
-                if hasattr(table._io, "_thread_locals") and hasattr(
-                    table._io._thread_locals, "get_fs_cached"
-                ):
-                    table._io._thread_locals.get_fs_cached.cache_clear()
-
-    def _ensure_table(self, table_id: str, schema: pa.Schema) -> object | None:
+    def _ensure_table(self, table_id: str, schema: pa.Schema) -> Table | None:
         if not self.catalog:
             return None
 
         try:
             table = self.catalog.load_table(table_id)
-            self._fix_io_endpoint(table)
+            # Support schema evolution for existing tables
+            existing_fields = set(table.schema().column_names)
+            missing_fields = [
+                field for field in schema if field.name not in existing_fields
+            ]
+            if missing_fields:
+                logger.info(
+                    f"[AUDIT] Evolving schema for {table_id}, adding: {[f.name for f in missing_fields]}"
+                )
+                from pyiceberg.types import DoubleType, LongType, StringType
+
+                with table.update_schema() as update:
+                    for field in missing_fields:
+                        if field.type == pa.float64():
+                            update.add_column(field.name, DoubleType())
+                        elif field.type == pa.int64():
+                            update.add_column(field.name, LongType())
+                        elif field.type == pa.string():
+                            update.add_column(field.name, StringType())
+                table = self.catalog.load_table(table_id)
             return table
         except NoSuchTableError:
             logger.info(f"[AUDIT] Creating {table_id}...")
@@ -98,7 +109,6 @@ class SEPAAuditWriter:
                 pass
 
             table = self.catalog.create_table(table_id, schema=schema)
-            self._fix_io_endpoint(table)
             return table
 
     def write_bronze(
@@ -165,7 +175,9 @@ class SEPAAuditWriter:
     def write_silver(
         self,
         fecha_vigencia: date,
-        drop_stats: Dict[str, int],
+        drop_stats: Dict[str, Any],
+        peak_memory_mb: float = 0.0,
+        duration_seconds: float = 0.0,
     ) -> None:
         """
         Append a single 'silver_precios' audit row to sepa.audit_silver.
@@ -184,6 +196,8 @@ class SEPAAuditWriter:
             "integrity_dropped": drop_stats.get("integrity_dropped", 0),
             "negative_price_count": drop_stats.get("negative_price_count", 0),
             "silver_loaded": drop_stats.get("silver_loaded", 0),
+            "peak_memory_mb": float(peak_memory_mb),
+            "duration_seconds": float(duration_seconds),
             "ingested_at": datetime.now(),
         }
 
@@ -194,6 +208,8 @@ class SEPAAuditWriter:
                 "integrity_dropped": pl.Int64,
                 "negative_price_count": pl.Int64,
                 "silver_loaded": pl.Int64,
+                "peak_memory_mb": pl.Float64,
+                "duration_seconds": pl.Float64,
             },
         )
         arrow_table = df.to_arrow().cast(SILVER_AUDIT_SCHEMA)
@@ -203,7 +219,9 @@ class SEPAAuditWriter:
             f"loaded={row['silver_loaded']:,}, "
             f"validation_dropped={row['validation_dropped']:,}, "
             f"integrity_dropped={row['integrity_dropped']:,}, "
-            f"negative_price_count={row['negative_price_count']:,}"
+            f"negative_price_count={row['negative_price_count']:,}, "
+            f"peak_memory_mb={row['peak_memory_mb']:.2f}, "
+            f"duration_seconds={row['duration_seconds']:.2f}s"
         )
         table.append(arrow_table)
         logger.info("[AUDIT] Silver audit write complete")

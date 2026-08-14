@@ -14,8 +14,11 @@ CLI examples:
 
 import argparse
 import asyncio
+import gc
+import resource
 import shutil
 import sys
+import time
 from datetime import date, datetime, timedelta
 
 import polars as pl
@@ -26,6 +29,7 @@ from sepa_pipeline.loaders.bigquery_loader import BigQueryLoader
 from sepa_pipeline.loaders.bronze_audit import SEPAAuditWriter
 from sepa_pipeline.loaders.iceberg_loader import IcebergLoader
 from sepa_pipeline.loaders.parquet_loader import ParquetLoader
+from sepa_pipeline.manage_iceberg import IcebergManager
 from sepa_pipeline.schema import (
     get_schema_dict,
     to_silver_comercios,
@@ -37,7 +41,6 @@ from sepa_pipeline.scraper import SepaScraper
 from sepa_pipeline.utils.fecha import Fecha
 from sepa_pipeline.utils.logger import get_logger
 from sepa_pipeline.validator import SEPAValidator
-from sepa_pipeline.manage_iceberg import IcebergManager
 
 logger = get_logger(__name__)
 
@@ -110,6 +113,7 @@ def process_daily_data(
     When ``force_rebuild_bronze`` is True, ignore the parquet cache and
     re-extract / rebuild from the raw ZIP (scraping only if raw is missing).
     """
+    start_time = time.time()
     logger.info(f"Starting SEPA pipeline for {target_date} | Targets: {targets}")
 
     parquet_loader = ParquetLoader(config)
@@ -249,6 +253,8 @@ def process_daily_data(
             bigquery_loader.load(df_silver_precios, target_date)
 
         total_loaded += chunk.height
+        del chunk, df_silver_precios, df_silver_productos
+        gc.collect()
 
     # Flush buffered precios so the last partial target-size window is written.
     if iceberg_loader:
@@ -259,9 +265,13 @@ def process_daily_data(
     drop_stats = validator.get_drop_stats()
     drop_stats["silver_loaded"] = total_loaded
 
+    duration_seconds = time.time() - start_time
+    peak_memory_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+
     logger.info(
-        f"Pipeline completed for {target_date} | "
+        f"Pipeline completed for {target_date} in {duration_seconds:.2f}s | "
         f"Products: {total_loaded:,} rows | "
+        f"Peak RAM: {peak_memory_mb:.2f} MB ({peak_memory_mb / 1024:.2f} GB) | "
         f"Dropped — validation: {drop_stats['validation_dropped']:,}, "
         f"integrity: {drop_stats['integrity_dropped']:,}, "
         f"negative_price: {drop_stats['negative_price_count']:,}"
@@ -270,6 +280,8 @@ def process_daily_data(
     audit_writer.write_silver(
         fecha_vigencia=target_date,
         drop_stats=drop_stats,
+        peak_memory_mb=peak_memory_mb,
+        duration_seconds=duration_seconds,
     )
 
 

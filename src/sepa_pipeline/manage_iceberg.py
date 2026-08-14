@@ -28,18 +28,6 @@ class IcebergManager:
             logger.error(f"Failed to initialize Iceberg Catalog: {e}")
             self.catalog = None
 
-    def _fix_io_endpoint(self, table) -> None:
-        """Override S3 endpoint (same as IcebergLoader) to ensure FileIO works correctly."""
-        s3_endpoint = self.config.minio_endpoint
-        _S3_ENDPOINT_KEY = "s3.endpoint"
-        if hasattr(table, "_io") and hasattr(table._io, "properties"):
-            if table._io.properties.get(_S3_ENDPOINT_KEY) != s3_endpoint:
-                table._io.properties[_S3_ENDPOINT_KEY] = s3_endpoint
-                if hasattr(table._io, "_thread_locals") and hasattr(
-                    table._io._thread_locals, "get_fs_cached"
-                ):
-                    table._io._thread_locals.get_fs_cached.cache_clear()
-
     def expire_table_snapshots(
         self, table_identifier: str, retain_days: int = 5
     ) -> None:
@@ -48,7 +36,6 @@ class IcebergManager:
 
         try:
             table = self.catalog.load_table(table_identifier)
-            self._fix_io_endpoint(table)
 
             logger.info(
                 f"Expiring snapshots for {table_identifier} (older than {retain_days} days)..."
@@ -60,9 +47,7 @@ class IcebergManager:
 
                 cutoff_dt = datetime.now(timezone.utc) - timedelta(days=retain_days)
                 table.maintenance.expire_snapshots().older_than(cutoff_dt).commit()
-                logger.info(
-                    f"✅ Successfully expired snapshots for {table_identifier}."
-                )
+                logger.info(f"Successfully expired snapshots for {table_identifier}.")
             else:
                 logger.warning(
                     f"Maintenance API not available on table {table_identifier}."
@@ -71,12 +56,7 @@ class IcebergManager:
         except NoSuchTableError:
             logger.info(f"Table {table_identifier} does not exist, skipping.")
         except Exception as e:
-            if "Nessie Catalog does not allow" in str(e):
-                logger.info(
-                    f"⏭️  Skipping {table_identifier}: Nessie Catalog manages its own snapshot garbage collection."
-                )
-            else:
-                logger.error(f"Failed to expire snapshots for {table_identifier}: {e}")
+            logger.error(f"Failed to expire snapshots for {table_identifier}: {e}")
 
     def clean_all_tables(self, retain_days: int = 5) -> None:
         logger.info(
