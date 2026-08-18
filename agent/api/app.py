@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from agent.sepa_agent import _load_agent_env, build_runtime
 
     _load_agent_env()
-    load_dotenv()  # also load root .env for MINIO_* etc.
+    load_dotenv()  # also load root .env for RUSTFS_* etc.
 
     logger.info("Initializing ADK agent runtime...")
     build_runtime()

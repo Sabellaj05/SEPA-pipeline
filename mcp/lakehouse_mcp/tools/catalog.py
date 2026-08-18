@@ -98,13 +98,15 @@ def get_table_snapshots(table_name: str) -> List[Dict[str, Any]]:
         snapshots = table.snapshots()
         result = []
         for snap in snapshots:
-            result.append({
-                "snapshot_id": snap.snapshot_id,
-                "timestamp_ms": snap.timestamp_ms,
-                "datetime": str(datetime.fromtimestamp(snap.timestamp_ms / 1000.0)),
-                "manifest_list": snap.manifest_list,
-                "summary": snap.summary,
-            })
+            result.append(
+                {
+                    "snapshot_id": snap.snapshot_id,
+                    "timestamp_ms": snap.timestamp_ms,
+                    "datetime": str(datetime.fromtimestamp(snap.timestamp_ms / 1000.0)),
+                    "manifest_list": snap.manifest_list,
+                    "summary": snap.summary,
+                }
+            )
         return result
     except Exception as e:
         logger.error(f"Error getting snapshots for {table_name}: {e}")

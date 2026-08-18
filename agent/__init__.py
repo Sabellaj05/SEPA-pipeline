@@ -17,6 +17,7 @@ ADK runner (``adk run agent``)::
     # No I/O occurs on bare import.
 
 """
+
 from __future__ import annotations
 
 from typing import Any

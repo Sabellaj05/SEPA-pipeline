@@ -30,6 +30,7 @@ def test_audit_tools():
     filtered = query_silver_audit(fecha_vigencia="2026-01-01")
     print(f"Filtered silver results: {len(filtered)}")
 
+
 if __name__ == "__main__":
     try:
         test_audit_tools()

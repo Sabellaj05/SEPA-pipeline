@@ -25,31 +25,13 @@ class SEPAConfig:
     Reads all settings from environment variables at instantiation time.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         # RustFS / S3 object storage
-        self.rustfs_endpoint: str | None = os.getenv(
-            "RUSTFS_ENDPOINT", os.getenv("MINIO_ENDPOINT")
-        )
-        self.rustfs_access_key: str | None = os.getenv(
-            "RUSTFS_ACCESS_KEY",
-            os.getenv(
-                "RUSTFS_USER",
-                os.getenv("MINIO_ACCESS_KEY", os.getenv("MINIO_USER")),
-            ),
-        )
-        self.rustfs_secret_key: str | None = os.getenv(
-            "RUSTFS_SECRET_KEY",
-            os.getenv(
-                "RUSTFS_PASSWORD",
-                os.getenv("MINIO_SECRET_KEY", os.getenv("MINIO_PASSWORD")),
-            ),
-        )
-        self.rustfs_bucket: str | None = os.getenv(
-            "RUSTFS_BUCKET", os.getenv("MINIO_BUCKET")
-        )
-        self.rustfs_region: str | None = os.getenv(
-            "RUSTFS_REGION", os.getenv("MINIO_REGION", "us-east-1")
-        )
+        self.rustfs_endpoint: str | None = os.getenv("RUSTFS_ENDPOINT")
+        self.rustfs_access_key: str | None = os.getenv("RUSTFS_ACCESS_KEY")
+        self.rustfs_secret_key: str | None = os.getenv("RUSTFS_SECRET_KEY")
+        self.rustfs_bucket: str | None = os.getenv("RUSTFS_BUCKET")
+        self.rustfs_region: str | None = os.getenv("RUSTFS_REGION", "us-east-1")
 
         if self.rustfs_access_key and "AWS_ACCESS_KEY_ID" not in os.environ:
             os.environ["AWS_ACCESS_KEY_ID"] = self.rustfs_access_key
@@ -72,26 +54,6 @@ class SEPAConfig:
         self.temp_dir: Path = Path(os.getenv("SEPA_TEMP_DIR", "/tmp"))
         self.raw_data_dir: Path = Path("data")
         self.archive_dir: Path = Path("data/archive")
-
-    @property
-    def minio_endpoint(self) -> str | None:
-        return self.rustfs_endpoint
-
-    @property
-    def minio_access_key(self) -> str | None:
-        return self.rustfs_access_key
-
-    @property
-    def minio_secret_key(self) -> str | None:
-        return self.rustfs_secret_key
-
-    @property
-    def minio_bucket(self) -> str | None:
-        return self.rustfs_bucket
-
-    @property
-    def minio_region(self) -> str | None:
-        return self.rustfs_region
 
     def _validate(self) -> None:
         # GCP is optional for local-only runs but required for BigQuery loader

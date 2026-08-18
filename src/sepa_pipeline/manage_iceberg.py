@@ -67,7 +67,7 @@ class IcebergManager:
         logger.info("Iceberg maintenance completed.")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="SEPA Pipeline Iceberg Maintenance")
     parser.add_argument(
         "--retain-days",

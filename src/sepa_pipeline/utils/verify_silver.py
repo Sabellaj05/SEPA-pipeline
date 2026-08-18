@@ -165,7 +165,7 @@ def verify_table(catalog: Catalog, identifier: str, target_date: date) -> bool:
         _fail(f"Scan failed: {e}")
         return False
 
-    df = pl.from_arrow(arrow)
+    df = pl.DataFrame(pl.from_arrow(arrow))
 
     if df.is_empty():
         _warn(f"No rows found for {target_date}")

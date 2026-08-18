@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+
 def test_mcp_config_injects_pyiceberg_home():
     """
     Test that importing lakehouse_mcp.config automatically resolves the .env
@@ -12,18 +13,20 @@ def test_mcp_config_injects_pyiceberg_home():
     try:
         import importlib
         import lakehouse_mcp.config
+
         importlib.reload(lakehouse_mcp.config)
 
         assert "PYICEBERG_HOME" in os.environ
 
         # Verify it points to the project root (where .env is)
-        expected_path = Path(lakehouse_mcp.config.__file__).resolve().parent.parent.parent
+        expected_path = (
+            Path(lakehouse_mcp.config.__file__).resolve().parent.parent.parent
+        )
         actual_path = Path(os.environ["PYICEBERG_HOME"]).resolve()
 
-        # Since it resolves find_dotenv(), it should be the project root
-        # If no .env is found in CI, find_dotenv returns empty, so this checks if it's set properly when .env is present
-        # In this mock environment, we just verify it exists and is an absolute path.
+        # Since it resolves find_dotenv(), it should match the project root when found
         assert actual_path.is_absolute()
+        assert actual_path == expected_path
 
     finally:
         # Restore environment

@@ -9,16 +9,16 @@ def test_rustfs_s3_connection():
     config = SEPAConfig()
     s3_client = boto3.client(
         "s3",
-        endpoint_url=config.minio_endpoint,
-        aws_access_key_id=config.minio_access_key,
-        aws_secret_access_key=config.minio_secret_key,
-        region_name=config.minio_region,
+        endpoint_url=config.rustfs_endpoint,
+        aws_access_key_id=config.rustfs_access_key,
+        aws_secret_access_key=config.rustfs_secret_key,
+        region_name=config.rustfs_region,
     )
     # List buckets to confirm RustFS S3 API works
     response = s3_client.list_buckets()
     assert "Buckets" in response
     bucket_names = [b["Name"] for b in response["Buckets"]]
-    assert config.minio_bucket in bucket_names
+    assert config.rustfs_bucket in bucket_names
 
 
 def test_polaris_catalog_connection():

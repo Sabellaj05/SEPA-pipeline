@@ -10,23 +10,23 @@ from sepa_pipeline.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def scan_bronze_dates():
+def scan_bronze_dates() -> None:
     """
-    Scans all master ZIP files in the MinIO bronze layer, checking if
+    Scans all master ZIP files in the RustFS bronze layer, checking if
     the internal 'comercio.csv' footer date matches the filename date.
     """
     logger.info("Starting Historical Bronze Date Scanner...")
     config = SEPAConfig()
 
     s3 = fs.S3FileSystem(
-        endpoint_override=config.minio_endpoint,
-        access_key=config.minio_access_key,
-        secret_key=config.minio_secret_key,
+        endpoint_override=config.rustfs_endpoint,
+        access_key=config.rustfs_access_key,
+        secret_key=config.rustfs_secret_key,
         scheme="http",
         region="us-east-1",
     )
 
-    base_path = f"{config.minio_bucket}/bronze/raw"
+    base_path = f"{config.rustfs_bucket}/bronze/raw"
     logger.info(f"Scanning base path: s3://{base_path}")
 
     # Use a file selector to recursively find all zip files

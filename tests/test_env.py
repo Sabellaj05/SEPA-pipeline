@@ -1,6 +1,7 @@
 import os
-import pytest
 from unittest import mock
+
+import pytest
 
 from sepa_pipeline.config import SEPAConfig
 
@@ -27,8 +28,6 @@ def test_config_loads_required_env_vars():
         assert config.rustfs_bucket == "test-bucket"
         assert config.rustfs_access_key == "test_access"
         assert config.rustfs_secret_key == "test_secret"
-        assert config.minio_endpoint == "http://localhost:9000"
-        assert config.minio_bucket == "test-bucket"
         assert config.polaris_uri == "http://localhost:8181/api/catalog"
         assert config.polaris_realm == "test_realm"
         assert config.polaris_client_id == "test_id"
@@ -45,23 +44,3 @@ def test_config_raises_on_missing_required_vars():
         assert "Missing required environment variables" in err_msg
         assert "RUSTFS_ENDPOINT" in err_msg
         assert "RUSTFS_BUCKET" in err_msg
-
-
-def test_config_fallback_to_minio_user():
-    """Test that RUSTFS_ACCESS_KEY falls back to RUSTFS_USER or MINIO_ACCESS_KEY if not explicitly set."""
-    with mock.patch.dict(
-        os.environ,
-        {
-            "MINIO_ENDPOINT": "http://localhost:9000",
-            "MINIO_BUCKET": "test-bucket",
-            "MINIO_USER": "fallback_user",
-            "MINIO_PASSWORD": "fallback_password",
-        },
-        clear=True,
-    ):
-        config = SEPAConfig()
-
-        assert config.rustfs_access_key == "fallback_user"
-        assert config.rustfs_secret_key == "fallback_password"
-        assert config.minio_access_key == "fallback_user"
-        assert config.minio_secret_key == "fallback_password"
