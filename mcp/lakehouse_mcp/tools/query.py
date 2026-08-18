@@ -87,12 +87,13 @@ def preview_table(table_name: str, limit: int = 50) -> List[Dict[str, Any]]:
         return [{"error": "No views are registered. DuckDB may not be initialized."}]
 
     if simple_name not in registered:
-        return [{
-            "error": (
-                f"Unknown table '{simple_name}'. "
-                f"Known tables: {sorted(registered)}"
-            )
-        }]
+        return [
+            {
+                "error": (
+                    f"Unknown table '{simple_name}'. Known tables: {sorted(registered)}"
+                )
+            }
+        ]
 
     # simple_name is now confirmed to be in the allowlist; safe to interpolate.
     return run_query(f"SELECT * FROM {simple_name}", limit=limit)

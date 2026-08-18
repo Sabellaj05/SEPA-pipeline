@@ -68,7 +68,7 @@ def _raw_zip_s3_path(config: SEPAConfig, target_date: date) -> str:
     """Return the S3 path where the raw ZIP should live."""
     filename = f"sepa_precios_{target_date.strftime('%Y-%m-%d')}.zip"
     return (
-        f"{config.minio_bucket}/bronze/raw/"
+        f"{config.rustfs_bucket}/bronze/raw/"
         f"year={target_date.year}/"
         f"month={target_date.month:02d}/"
         f"day={target_date.day:02d}/"
@@ -81,14 +81,14 @@ def _raw_zip_exists(config: SEPAConfig, target_date: date) -> bool:
     from pyarrow import fs
 
     s3 = fs.S3FileSystem(
-        endpoint_override=config.minio_endpoint,
-        access_key=config.minio_access_key,
-        secret_key=config.minio_secret_key,
+        endpoint_override=config.rustfs_endpoint,
+        access_key=config.rustfs_access_key,
+        secret_key=config.rustfs_secret_key,
         scheme="http",
         region="us-east-1",
     )
     info = s3.get_file_info(_raw_zip_s3_path(config, target_date))
-    return info.type != fs.FileType.NotFound
+    return bool(info.type != fs.FileType.NotFound)
 
 
 # ---------------------------------------------------------------------------

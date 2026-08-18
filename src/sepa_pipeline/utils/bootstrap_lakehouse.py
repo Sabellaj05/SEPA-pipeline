@@ -14,10 +14,10 @@ logger = get_logger(__name__)
 config = SEPAConfig()
 s3_client = boto3.client(
     "s3",
-    endpoint_url=config.minio_endpoint,
-    aws_access_key_id=config.minio_access_key,
-    aws_secret_access_key=config.minio_secret_key,
-    region_name=config.minio_region,
+    endpoint_url=config.rustfs_endpoint,
+    aws_access_key_id=config.rustfs_access_key,
+    aws_secret_access_key=config.rustfs_secret_key,
+    region_name=config.rustfs_region,
 )
 
 
@@ -27,7 +27,7 @@ def ensure_polaris_catalog() -> None:
     realm = config.polaris_realm or "default"
     client_id = config.polaris_client_id or "polaris"
     client_secret = config.polaris_client_secret or "polaris"
-    bucket = config.minio_bucket or "sepa-lakehouse"
+    bucket = config.rustfs_bucket or "sepa-lakehouse"
     warehouse_loc = f"s3://{bucket}/silver/iceberg"
 
     base_url = polaris_uri.rstrip("/").removesuffix("/v1")
@@ -123,7 +123,7 @@ def bootstrap_lakehouse(local_dir: str | None = None) -> None:
     # Initialize S3 Client
 
     # Use consistent bucket name from config
-    batch_bucket = config.minio_bucket or "sepa-lakehouse"
+    batch_bucket = config.rustfs_bucket or "sepa-lakehouse"
 
     logger.info(f"Bootstrapping Lakehouse Bucket: {batch_bucket}...")
 
@@ -194,7 +194,7 @@ def teardown_silver_tables() -> None:
     have run.
     """
     catalog = load_catalog("default")
-    bucket = config.minio_bucket or "sepa-lakehouse"
+    bucket = config.rustfs_bucket or "sepa-lakehouse"
 
     silver_tables = [
         "sepa.precios",
@@ -243,7 +243,7 @@ def teardown_silver_tables() -> None:
     logger.info("[TEARDOWN] Silver teardown complete.")
 
 
-def check_exists_file(bucket, target_key) -> bool:
+def check_exists_file(bucket: str, target_key: str) -> bool:
     try:
         # head object only retrieves metadata
         s3_client.head_object(Bucket=bucket, Key=target_key)

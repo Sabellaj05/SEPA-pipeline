@@ -3,15 +3,17 @@ SEPA Data Extractor
 Handles ZIP file extraction.
 """
 
+import re
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from sepa_pipeline.utils.logger import get_logger
-import re
+
 from pyarrow import fs
+
 from sepa_pipeline.config import SEPAConfig
+from sepa_pipeline.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -141,16 +143,16 @@ class SEPAExtractor:
     @staticmethod
     def fetch_from_bronze(target_date: date, config: SEPAConfig) -> Optional[Path]:
         """
-        Download the Master ZIP from MinIO (Bronze Layer) and unzip it to a temp dir.
+        Download the Master ZIP from RustFS (Bronze Layer) and unzip it to a temp dir.
         Returns the path to the directory containing the child ZIPs.
         """
-        logger.info(f"Fetching Bronze Layer data for {target_date} from MinIO...")
+        logger.info(f"Fetching Bronze Layer data for {target_date} from RustFS...")
 
         # Initialize S3 Filesystem
         s3 = fs.S3FileSystem(
-            endpoint_override=config.minio_endpoint,
-            access_key=config.minio_access_key,
-            secret_key=config.minio_secret_key,
+            endpoint_override=config.rustfs_endpoint,
+            access_key=config.rustfs_access_key,
+            secret_key=config.rustfs_secret_key,
             scheme="http",
             region="us-east-1",
         )
@@ -161,7 +163,7 @@ class SEPAExtractor:
 
         filename = f"sepa_precios_{target_date.strftime('%Y-%m-%d')}.zip"
         s3_path = (
-            f"{config.minio_bucket}/bronze/raw/"
+            f"{config.rustfs_bucket}/bronze/raw/"
             f"year={target_date.year}/"
             f"month={target_date.month:02d}/"
             f"day={target_date.day:02d}/"

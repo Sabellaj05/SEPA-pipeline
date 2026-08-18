@@ -17,7 +17,6 @@ from sepa_pipeline.loaders.parquet_loader import (
     ParquetLoader,
 )
 
-
 FECHA = date(2026, 4, 4)
 
 
@@ -29,7 +28,7 @@ def local_fs(tmp_path: Path) -> fs.SubTreeFileSystem:
 
 @pytest.fixture
 def config() -> SimpleNamespace:
-    return SimpleNamespace(minio_bucket="sepa-lakehouse")
+    return SimpleNamespace(rustfs_bucket="sepa-lakehouse")
 
 
 @pytest.fixture

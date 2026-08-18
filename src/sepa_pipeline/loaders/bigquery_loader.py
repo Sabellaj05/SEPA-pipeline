@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 
 class BigQueryLoader(BaseLoader):
     """
-    Loader for Apache Iceberg tables stored in S3/MinIO and registered in
+    Loader for Apache Iceberg tables stored in S3/RustFS and registered in
     Google BigQuery (BigLake).
     Relies on native write support for PyIceberg.
     """

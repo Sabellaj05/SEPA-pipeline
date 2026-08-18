@@ -1,5 +1,5 @@
 """
-Bronze Parquet Layer — Materializes raw CSV data as Parquet on MinIO.
+Bronze Parquet Layer — Materializes raw CSV data as Parquet on RustFS.
 
 Reads all child ZIP CSVs (comercio, sucursales, productos) extracted from the
 daily master ZIP and writes a single Parquet file per table per date to
@@ -43,7 +43,7 @@ _COPY_CHUNK_BYTES = 8 * 1024 * 1024
 
 class ParquetLoader:
     """
-    Bronze Parquet layer: materializes extracted CSVs as Parquet on MinIO/S3
+    Bronze Parquet layer: materializes extracted CSVs as Parquet on RustFS/S3
     and provides read access for downstream silver processing.
     """
 
@@ -55,16 +55,16 @@ class ParquetLoader:
         self.config = config
         # Injected filesystem is used in tests (LocalFileSystem / SubTreeFileSystem).
         self._s3: fs.FileSystem = filesystem or fs.S3FileSystem(
-            endpoint_override=config.minio_endpoint,
-            access_key=config.minio_access_key,
-            secret_key=config.minio_secret_key,
+            endpoint_override=config.rustfs_endpoint,
+            access_key=config.rustfs_access_key,
+            secret_key=config.rustfs_secret_key,
             scheme="http",
             region="us-east-1",
         )
 
     def _parquet_prefix(self, fecha_vigencia: date) -> str:
         return (
-            f"{self.config.minio_bucket}/bronze/parquet/"
+            f"{self.config.rustfs_bucket}/bronze/parquet/"
             f"year={fecha_vigencia.year}/"
             f"month={fecha_vigencia.month:02d}/"
             f"day={fecha_vigencia.day:02d}"
@@ -280,7 +280,7 @@ class ParquetLoader:
         fecha_vigencia: date,
     ) -> Dict[str, Dict]:
         """
-        Read all extracted CSVs and write Parquet to MinIO (streamed staging).
+        Read all extracted CSVs and write Parquet to RustFS (streamed staging).
 
         Files are written under ``.staging/`` first. Only when all three tables
         stage successfully are they promoted to the day prefix and ``_SUCCESS``
@@ -356,7 +356,7 @@ class ParquetLoader:
         self,
         fecha_vigencia: date,
         batch_size: int = 500_000,
-    ) -> Iterator[pl.DataFrame | pl.Series]:
+    ) -> Iterator[pl.DataFrame]:
         """
         Yield productos parquet in batches to keep memory bounded.
 

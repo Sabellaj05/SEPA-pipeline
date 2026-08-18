@@ -16,7 +16,7 @@ def init_duckdb():
     db_conn = duckdb.connect()
     db_conn.execute("INSTALL httpfs; LOAD httpfs;")
 
-    endpoint = config.minio_endpoint
+    endpoint = config.rustfs_endpoint
     if endpoint:
         if endpoint.startswith("http://"):
             endpoint = endpoint[7:]
@@ -26,8 +26,8 @@ def init_duckdb():
     db_conn.execute(f"""
         CREATE SECRET (
             TYPE S3,
-            KEY_ID '{config.minio_access_key}',
-            SECRET '{config.minio_secret_key}',
+            KEY_ID '{config.rustfs_access_key}',
+            SECRET '{config.rustfs_secret_key}',
             ENDPOINT '{endpoint}',
             URL_STYLE 'path',
             USE_SSL false

@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 # Mounting it at "/" keeps the public MCP endpoint at /mcp.
 streamable_app = mcp.streamable_http_app()
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing DuckDB and registering views...")
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
     finally:
         logger.info("Closing DuckDB connection...")
         close_duckdb()
+
 
 app = FastAPI(lifespan=lifespan)
 

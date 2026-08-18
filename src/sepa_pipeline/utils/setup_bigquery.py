@@ -38,5 +38,9 @@ def setup_gold_dataset(project_id: str, dataset_id: str, location: str) -> None:
 
 if __name__ == "__main__":
     logger.info("Starting BigQuery environment setup...")
+    if not (config.gcp_project and config.gcp_dataset_gold and config.gcp_location):
+        raise ValueError(
+            "Missing GCP configuration (GCP_PROJECT, GCP_DATASET_GOLD, GCP_LOCATION)."
+        )
     setup_gold_dataset(config.gcp_project, config.gcp_dataset_gold, config.gcp_location)
     logger.info("BigQuery environment setup complete.")

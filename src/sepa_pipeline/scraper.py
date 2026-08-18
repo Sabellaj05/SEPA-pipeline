@@ -1,21 +1,20 @@
 """SEPA Precios data scraper"""
 
+import io
 import re
+import zipfile
+from datetime import date
 from pathlib import Path
 from types import TracebackType
 from typing import Optional, Self
-from datetime import date
 
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from pyarrow import fs
 from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 from tqdm import tqdm
 
 from sepa_pipeline.config import SEPAConfig
-
-import zipfile
-import io
 
 from .utils.fecha import Fecha
 from .utils.logger import get_logger
@@ -121,13 +120,15 @@ class SepaScraper:
             logger.info(f"Found {len(pkg_containers)} package containers")
 
             for container in pkg_containers:
+                if not isinstance(container, Tag):
+                    continue
                 # check date in this container
                 package_info = container.find("div", class_="package-info")
-                if not package_info:
+                if not isinstance(package_info, Tag):
                     continue
 
                 p_tag = package_info.find("p")
-                if not p_tag:
+                if not isinstance(p_tag, Tag):
                     continue
 
                 text_content = p_tag.get_text().strip()
@@ -141,11 +142,13 @@ class SepaScraper:
                         # get the download link from THIS container
                         # The actions div is usually a sibling or child in the same container
                         actions_div = container.find("div", class_="pkg-actions")
-                        if actions_div:
+                        if isinstance(actions_div, Tag):
                             # Look for the download button/link
                             # Usually the second link or the one with button "DESCARGAR"
                             links = actions_div.find_all("a", href=True)
                             for link in links:
+                                if not isinstance(link, Tag):
+                                    continue
                                 href = link.get("href", "")
                                 # Check if it looks like a zip download or contains "download"
                                 if (
@@ -156,11 +159,13 @@ class SepaScraper:
                                     return str(href)
 
                         # Fallback: Searching recursively in this container if logic above failed
-                        link = container.find(
-                            "a", href=True, string=lambda t: t and "DESCARGAR" in t
+                        fallback_link = container.find(
+                            "a",
+                            href=True,
+                            string=lambda t: bool(t and "DESCARGAR" in t),
                         )
-                        if link:
-                            return str(link.get("href"))
+                        if isinstance(fallback_link, Tag):
+                            return str(fallback_link.get("href"))
 
                 # If date doesn't match, continue to next container
 
@@ -400,7 +405,7 @@ class SepaScraper:
         success = await self._download_data(download_link, min_file_size_mb)
 
         if success:
-            # Upload to Bronze Layer (MinIO)
+            # Upload to Bronze Layer (RustFS)
             try:
                 file_name = self._storage_filename()
                 local_path = self.data_dir / file_name
@@ -413,16 +418,16 @@ class SepaScraper:
         return success
 
     def upload_to_bronze(self, local_path: Path) -> None:
-        """Upload the raw ZIP file to MinIO (Bronze Layer)."""
-        logger.info(f"Uploading {local_path} to Bronze Layer (MinIO)...")
+        """Upload the raw ZIP file to RustFS (Bronze Layer)."""
+        logger.info(f"Uploading {local_path} to Bronze Layer (RustFS)...")
 
         config = SEPAConfig()
 
         # Initialize S3 Filesystem
         s3 = fs.S3FileSystem(
-            endpoint_override=config.minio_endpoint,
-            access_key=config.minio_access_key,
-            secret_key=config.minio_secret_key,
+            endpoint_override=config.rustfs_endpoint,
+            access_key=config.rustfs_access_key,
+            secret_key=config.rustfs_secret_key,
             scheme="http",
             region="us-east-1",
         )
@@ -432,7 +437,7 @@ class SepaScraper:
         date_path = self.fecha.ahora
 
         s3_path = (
-            f"{config.minio_bucket}/bronze/raw/"
+            f"{config.rustfs_bucket}/bronze/raw/"
             f"year={date_path.year}/"
             f"month={date_path.month:02d}/"
             f"day={date_path.day:02d}/"
@@ -450,4 +455,4 @@ class SepaScraper:
 
             logger.info("Upload to Bronze Layer successful")
         except Exception as e:
-            logger.warning(f"Error uploading data to MinIO: {e}")
+            logger.warning(f"Error uploading data to RustFS: {e}")

@@ -1,6 +1,6 @@
 """Tests for the Agent HTTP API (FastAPI).
 
-These tests mock the ADK runner so they can run without MCP, MinIO, or
+These tests mock the ADK runner so they can run without MCP, RustFS, or
 a running LLM server.  They verify request/response contracts, SSE
 streaming format, session management, and error handling.
 """
@@ -190,9 +190,7 @@ class TestStreaming:
                 json={"prompt": "list tables"},
             )
         lines = resp.text.strip().split("\n")
-        data_lines = [
-            line for line in lines if line.startswith("data: ")
-        ]
+        data_lines = [line for line in lines if line.startswith("data: ")]
 
         # Last data line should be [DONE]
         assert data_lines[-1] == "data: [DONE]"
@@ -218,14 +216,12 @@ class TestStreaming:
             )
         lines = resp.text.strip().split("\n")
         data_lines = [
-            line for line in lines
+            line
+            for line in lines
             if line.startswith("data: ") and line != "data: [DONE]"
         ]
 
-        events = [
-            json.loads(line.removeprefix("data: "))
-            for line in data_lines
-        ]
+        events = [json.loads(line.removeprefix("data: ")) for line in data_lines]
         types = [e["type"] for e in events]
         assert "final" in types
 
@@ -248,14 +244,12 @@ class TestStreaming:
 
         lines = resp.text.strip().split("\n")
         data_lines = [
-            line for line in lines
+            line
+            for line in lines
             if line.startswith("data: ") and line != "data: [DONE]"
         ]
 
-        events = [
-            json.loads(line.removeprefix("data: "))
-            for line in data_lines
-        ]
+        events = [json.loads(line.removeprefix("data: ")) for line in data_lines]
         error_events = [e for e in events if e["type"] == "error"]
         assert len(error_events) == 1
         assert "LLM connection failed" in error_events[0]["content"]

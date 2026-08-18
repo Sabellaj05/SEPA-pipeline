@@ -43,4 +43,3 @@ def test_run_query_normalizes_sepa_prefix_for_registered_views(
     assert "sepa.dim_comercios" not in conn.executed_sql
     assert "FROM precios p" in conn.executed_sql
     assert "JOIN dim_comercios c" in conn.executed_sql
-
