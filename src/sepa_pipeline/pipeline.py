@@ -367,36 +367,51 @@ def _resolve_dates(args: argparse.Namespace) -> list[date]:
         return [Fecha().ahora.date()]
 
 
-if __name__ == "__main__":
+def main() -> int:
+    """Run the SEPA pipeline CLI."""
     config = SEPAConfig()
     args = parse_args()
     dates = _resolve_dates(args)
     targets = [t.strip().lower() for t in args.target.split(",")]
 
-    if args.scrape_only:
-        logger.info(
-            f"Scrape-only mode | Dates: {dates[0]} to {dates[-1]} ({len(dates)} day(s))"
-        )
-        for target_date in dates:
-            success = asyncio.run(_scrape_date(target_date))
-            if success:
-                logger.info(f"Scrape successful for {target_date}")
-            else:
-                logger.error(f"Scrape failed for {target_date}")
-    else:
-        logger.info(
-            f"Full pipeline | Dates: {dates[0]} to {dates[-1]} "
-            f"({len(dates)} day(s)) | Targets: {targets}"
-        )
-        for target_date in dates:
-            process_daily_data(
-                target_date,
-                config,
-                targets,
-                force_rebuild_bronze=args.force_rebuild_bronze,
+    try:
+        if args.scrape_only:
+            logger.info(
+                f"Scrape-only mode | Dates: {dates[0]} to {dates[-1]} ({len(dates)} day(s))"
             )
+            for target_date in dates:
+                success = asyncio.run(_scrape_date(target_date))
+                if success:
+                    logger.info(f"Scrape successful for {target_date}")
+                else:
+                    logger.error(f"Scrape failed for {target_date}")
+        else:
+            logger.info(
+                f"Full pipeline | Dates: {dates[0]} to {dates[-1]} "
+                f"({len(dates)} day(s)) | Targets: {targets}"
+            )
+            for target_date in dates:
+                process_daily_data(
+                    target_date,
+                    config,
+                    targets,
+                    force_rebuild_bronze=args.force_rebuild_bronze,
+                )
 
-        if args.maintain_iceberg and "iceberg" in targets:
-            logger.info("Running post-pipeline Iceberg maintenance...")
-            manager = IcebergManager(config)
-            manager.clean_all_tables()
+            if args.maintain_iceberg and "iceberg" in targets:
+                logger.info("Running post-pipeline Iceberg maintenance...")
+                manager = IcebergManager(config)
+                manager.clean_all_tables()
+        return 0
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        logger.warning(
+            "Pipeline execution interrupted by user (Ctrl+C). Exiting cleanly."
+        )
+        return 130
+    except Exception as e:
+        logger.error(f"Fatal pipeline error: {e}", exc_info=True)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
