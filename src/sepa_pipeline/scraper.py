@@ -1,5 +1,6 @@
 """SEPA Precios data scraper"""
 
+import asyncio
 import io
 import re
 import zipfile
@@ -11,7 +12,13 @@ from typing import Optional, Self
 import httpx
 from bs4 import BeautifulSoup, Tag
 from pyarrow import fs
-from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    RetryCallState,
+    RetryError,
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+)
 from tqdm import tqdm
 
 from sepa_pipeline.config import SEPAConfig
@@ -20,6 +27,29 @@ from .utils.fecha import Fecha
 from .utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
+}
+
+
+def _log_retry_attempt(retry_state: RetryCallState) -> None:
+    """Log details when a connection attempt fails before sleeping for retry."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    exc_name = type(exc).__name__ if exc else "UnknownError"
+    exc_msg = str(exc) if (exc and str(exc)) else "Connection timed out or dropped"
+    sleep_time = (
+        f"{retry_state.next_action.sleep:.1f}s" if retry_state.next_action else "soon"
+    )
+    logger.warning(
+        f"Attempt {retry_state.attempt_number} failed with [{exc_name}] {exc_msg}. "
+        f"Retrying in {sleep_time}..."
+    )
 
 
 class SepaScraper:
@@ -41,7 +71,12 @@ class SepaScraper:
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self) -> Self:
-        self._client = httpx.AsyncClient(timeout=30.0)
+        timeout = httpx.Timeout(timeout=60.0, connect=15.0)
+        self._client = httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=True,
+            headers=DEFAULT_HEADERS,
+        )
         return self
 
     async def __aexit__(
@@ -58,7 +93,7 @@ class SepaScraper:
         return f"sepa_{self.fecha.nombre_weekday}.zip"
 
     def _storage_filename(self) -> str:
-        """Return (date-based) filename used when storing the downladed file"""
+        """Return (date-based) filename used when storing the downloaded file"""
         return f"sepa_precios_{self.fecha.hoy}.zip"
 
     @property
@@ -71,7 +106,10 @@ class SepaScraper:
         return self._client
 
     @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10)
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        before_sleep=_log_retry_attempt,
+        reraise=True,
     )
     async def _connect_to_source(self) -> Optional[httpx.Response]:
         """
@@ -90,11 +128,16 @@ class SepaScraper:
 
         # let tenacity handle the error with 'raise'
         except httpx.RequestError as exc:
-            logger.error(f"Error while requesting {exc.request.url!r}: {exc}")
+            error_detail = (
+                str(exc) if str(exc) else "Connection timed out or network error"
+            )
+            logger.error(
+                f"Error while requesting {exc.request.url!r}: [{type(exc).__name__}] {error_detail}"
+            )
             raise
         except httpx.HTTPStatusError as exc:
             logger.error(
-                f"HTTP {exc.response.status_code} errror for {exc.request.url!r}"
+                f"HTTP {exc.response.status_code} ({exc.response.reason_phrase}) error for {exc.request.url!r}"
             )
             raise
 
@@ -193,12 +236,11 @@ class SepaScraper:
             logger.error("No download link provided")
             return False
 
+        self.data_dir.mkdir(exist_ok=True)
+        file_name = self._storage_filename()
+        file_path = self.data_dir / file_name
+
         try:
-            self.data_dir.mkdir(exist_ok=True)
-
-            file_name = self._storage_filename()
-            file_path = self.data_dir / file_name
-
             logger.info(f"Downloading file: {file_name}")
             logger.info(f"Destination path: {file_path}")
             logger.info(f"Source link: {download_link}")
@@ -216,7 +258,7 @@ class SepaScraper:
                             f"Expected size ({total_mb:.2f} MB) smaller than "
                             f"minimum ({min_file_size_mb}) MB"
                         )
-                # Downlaod wit progressbar
+                # Download with progress bar
                 with tqdm(
                     total=total, unit="iB", unit_scale=True, desc=file_name
                 ) as pbar:
@@ -248,19 +290,35 @@ class SepaScraper:
 
             logger.info("File downloaded successfully and size validated")
             return True
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            logger.warning(
+                f"Download interrupted by user. Cleaning up incomplete file: {file_path.name}"
+            )
+            if file_path.exists():
+                file_path.unlink(missing_ok=True)
+            raise
         except httpx.RequestError as exc:
-            logger.error(f"Error downloading the file: {exc}")
+            error_detail = (
+                str(exc) if str(exc) else "Connection timed out or network error"
+            )
+            logger.error(
+                f"Error downloading the file from {download_link}: [{type(exc).__name__}] {error_detail}"
+            )
+            if file_path.exists():
+                file_path.unlink(missing_ok=True)
             return False
         except httpx.HTTPStatusError as exc:
             logger.error(
-                f"HTTP {exc.response.status_code} error downloading: {download_link}"
+                f"HTTP {exc.response.status_code} ({exc.response.reason_phrase}) error downloading: {download_link}"
             )
-            if file_path and file_path.exists():
+            if file_path.exists():
                 file_path.unlink(missing_ok=True)
             return False
         except Exception as e:
-            logger.error(f"Unexpected error downloading the file: {e}")
-            if "file_path" in locals() and file_path and file_path.exists():
+            logger.error(
+                f"Unexpected error downloading the file: [{type(e).__name__}] {e}"
+            )
+            if file_path.exists():
                 file_path.unlink(missing_ok=True)
             return False
 
@@ -386,10 +444,13 @@ class SepaScraper:
         """
         try:
             response = await self._connect_to_source()
-        except RetryError:
+        except (RetryError, httpx.RequestError, httpx.HTTPStatusError) as exc:
             logger.error(
-                "Failed to connect to source after multiple attempts. Aborting."
+                f"Failed to connect to source after multiple attempts ({type(exc).__name__}). Aborting."
             )
+            return False
+        except Exception as exc:
+            logger.error(f"Unexpected error connecting to source: {exc}")
             return False
 
         if not response:

@@ -395,3 +395,82 @@ class TestSepaScraper:
 
             result = scraper._validate_zip_date(zip_path)
             assert result is False
+
+    @pytest.mark.asyncio
+    async def test_download_data_keyboard_interrupt_cleanup(
+        self, sample_url, sample_data_dir
+    ):
+        """Test that KeyboardInterrupt during download cleans up partial file and re-raises."""
+
+        async with SepaScraper(
+            url=sample_url, data_dir=str(sample_data_dir)
+        ) as scraper:
+            download_link = "https://example.com/test.zip"
+
+            mock_response = Mock()
+            mock_response.headers = {"content-length": "1000"}
+
+            async def mock_aiter_bytes():
+                yield b"part1"
+                raise KeyboardInterrupt()
+
+            mock_response.aiter_bytes.return_value = mock_aiter_bytes()
+
+            class MockAsyncContext:
+                def __init__(self, response):
+                    self.response = response
+
+                async def __aenter__(self):
+                    return self.response
+
+                async def __aexit__(self, exc_type, exc_val, exc_tb):
+                    pass
+
+            scraper.client.stream = Mock(return_value=MockAsyncContext(mock_response))
+
+            with pytest.raises(KeyboardInterrupt):
+                await scraper._download_data(download_link)
+
+            file_path = sample_data_dir / scraper._storage_filename()
+            assert not file_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_download_data_request_error(self, sample_url, sample_data_dir):
+        """Test that httpx.RequestError during download cleans up and returns False."""
+        import httpx
+
+        async with SepaScraper(
+            url=sample_url, data_dir=str(sample_data_dir)
+        ) as scraper:
+            download_link = "https://example.com/test.zip"
+
+            class MockErrorContext:
+                async def __aenter__(self):
+                    request = httpx.Request("GET", download_link)
+                    raise httpx.ConnectTimeout("Timed out", request=request)
+
+                async def __aexit__(self, exc_type, exc_val, exc_tb):
+                    pass
+
+            scraper.client.stream = Mock(return_value=MockErrorContext())
+
+            result = await scraper._download_data(download_link)
+            assert result is False
+            file_path = sample_data_dir / scraper._storage_filename()
+            assert not file_path.exists()
+
+    def test_pipeline_main_graceful_interrupt(self, monkeypatch):
+        """Test that pipeline.main handles KeyboardInterrupt cleanly with return code 130."""
+        from sepa_pipeline.pipeline import main
+
+        monkeypatch.setattr(
+            "sys.argv", ["pipeline.py", "--scrape-only", "--date", "2026-08-20"]
+        )
+
+        def mock_scrape_date(target_date):
+            raise KeyboardInterrupt()
+
+        monkeypatch.setattr("sepa_pipeline.pipeline._scrape_date", mock_scrape_date)
+
+        exit_code = main()
+        assert exit_code == 130
