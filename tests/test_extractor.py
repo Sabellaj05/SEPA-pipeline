@@ -128,3 +128,57 @@ class TestSEPAExtractor:
         assert malformed_count == 1
         assert "comercio" in all_csv_paths[0]
         assert malformed_count == 1
+
+    def test_fetch_from_bronze_success(self, tmp_path: Path):
+        """Test fetch_from_bronze downloads and extracts master zip using boto3."""
+        from datetime import date
+        from unittest.mock import Mock, patch
+        from sepa_pipeline.config import SEPAConfig
+
+        target_date = date(2026, 1, 15)
+        config = SEPAConfig()
+        config.temp_dir = tmp_path
+
+        # Create master zip with 1 nested zip
+        zip_bytes = make_sepa_zip(n_nested_zips=1)
+
+        with patch("boto3.client") as mock_boto:
+            mock_s3 = Mock()
+            mock_boto.return_value = mock_s3
+
+            def fake_download(bucket, key, dest):
+                Path(dest).write_bytes(zip_bytes)
+
+            mock_s3.download_file.side_effect = fake_download
+
+            result_dir = SEPAExtractor.fetch_from_bronze(target_date, config)
+
+            assert result_dir is not None
+            assert result_dir.exists()
+            assert any(result_dir.glob("sepa_*.zip"))
+            mock_s3.head_object.assert_called_once()
+            mock_s3.download_file.assert_called_once()
+
+    def test_fetch_from_bronze_not_found(self, tmp_path: Path):
+        """Test fetch_from_bronze returns None when file is missing in Bronze."""
+        from datetime import date
+        from unittest.mock import Mock, patch
+        from botocore.exceptions import ClientError
+        from sepa_pipeline.config import SEPAConfig
+
+        target_date = date(2026, 1, 15)
+        config = SEPAConfig()
+        config.temp_dir = tmp_path
+
+        with patch("boto3.client") as mock_boto:
+            mock_s3 = Mock()
+            mock_s3.head_object.side_effect = ClientError(
+                {"Error": {"Code": "404", "Message": "Not Found"}}, "head_object"
+            )
+            mock_boto.return_value = mock_s3
+
+            result_dir = SEPAExtractor.fetch_from_bronze(target_date, config)
+
+            assert result_dir is None
+            mock_s3.head_object.assert_called_once()
+            mock_s3.download_file.assert_not_called()
