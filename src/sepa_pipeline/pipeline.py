@@ -78,17 +78,33 @@ def _raw_zip_s3_path(config: SEPAConfig, target_date: date) -> str:
 
 def _raw_zip_exists(config: SEPAConfig, target_date: date) -> bool:
     """Check if the raw ZIP already exists in the bronze layer."""
-    from pyarrow import fs
+    import boto3
+    from botocore.exceptions import ClientError
 
-    s3 = fs.S3FileSystem(
-        endpoint_override=config.rustfs_endpoint,
-        access_key=config.rustfs_access_key,
-        secret_key=config.rustfs_secret_key,
-        scheme="http",
-        region="us-east-1",
+    s3_client = boto3.client(
+        "s3",
+        endpoint_url=config.rustfs_endpoint,
+        aws_access_key_id=config.rustfs_access_key,
+        aws_secret_access_key=config.rustfs_secret_key,
+        region_name=config.rustfs_region,
     )
-    info = s3.get_file_info(_raw_zip_s3_path(config, target_date))
-    return bool(info.type != fs.FileType.NotFound)
+    bucket = config.rustfs_bucket or "sepa-lakehouse"
+    filename = f"sepa_precios_{target_date.strftime('%Y-%m-%d')}.zip"
+    key = (
+        f"bronze/raw/"
+        f"year={target_date.year}/"
+        f"month={target_date.month:02d}/"
+        f"day={target_date.day:02d}/"
+        f"{filename}"
+    )
+    try:
+        s3_client.head_object(Bucket=bucket, Key=key)
+        return True
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code")
+        if error_code in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
 
 
 # ---------------------------------------------------------------------------

@@ -9,9 +9,11 @@ from pathlib import Path
 from types import TracebackType
 from typing import Optional, Self
 
+import boto3
 import httpx
+from boto3.s3.transfer import TransferConfig
+from botocore.config import Config
 from bs4 import BeautifulSoup, Tag
-from pyarrow import fs
 from tenacity import (
     RetryCallState,
     RetryError,
@@ -473,47 +475,59 @@ class SepaScraper:
                 self.upload_to_bronze(local_path)
             except Exception as e:
                 logger.error(f"Failed to upload to Bronze layer: {e}")
-                # We don't return False here because the download itself was successful,
-                # and for local dev we might continue. In strict cloud, this might be fatal.
+                return False
 
         return success
 
-    def upload_to_bronze(self, local_path: Path) -> None:
-        """Upload the raw ZIP file to RustFS (Bronze Layer)."""
+    def upload_to_bronze(
+        self, local_path: Path, config: SEPAConfig | None = None
+    ) -> None:
+        """Upload the raw ZIP file to RustFS (Bronze Layer) using boto3."""
         logger.info(f"Uploading {local_path} to Bronze Layer (RustFS)...")
 
-        config = SEPAConfig()
+        cfg = config or SEPAConfig()
+        bucket = cfg.rustfs_bucket or "sepa-lakehouse"
 
-        # Initialize S3 Filesystem
-        s3 = fs.S3FileSystem(
-            endpoint_override=config.rustfs_endpoint,
-            access_key=config.rustfs_access_key,
-            secret_key=config.rustfs_secret_key,
-            scheme="http",
-            region="us-east-1",
+        s3_client = boto3.client(
+            "s3",
+            endpoint_url=cfg.rustfs_endpoint,
+            aws_access_key_id=cfg.rustfs_access_key,
+            aws_secret_access_key=cfg.rustfs_secret_key,
+            region_name=cfg.rustfs_region,
+            config=Config(
+                retries={"max_attempts": 5, "mode": "adaptive"},
+                connect_timeout=15,
+                read_timeout=60,
+            ),
         )
 
-        # Define path: bronze/raw/YYYY/MM/DD/filename.zip
-        # We use the date from 'self.fecha.ahora' which is a datetime object.
         date_path = self.fecha.ahora
 
-        s3_path = (
-            f"{config.rustfs_bucket}/bronze/raw/"
+        s3_key = (
+            f"bronze/raw/"
             f"year={date_path.year}/"
             f"month={date_path.month:02d}/"
             f"day={date_path.day:02d}/"
             f"{local_path.name}"
         )
 
-        # Ensure directory structure exists (S3 doesn't strictly need this but good for some clients)
-        logger.info(f"Destination: s3://{s3_path}")
+        logger.info(f"Destination: s3://{bucket}/{s3_key}")
 
-        # Manually stream the file to avoid API version issues with fs.copy_file
+        transfer_config = TransferConfig(
+            multipart_threshold=32 * 1024 * 1024,
+            multipart_chunksize=16 * 1024 * 1024,
+            max_concurrency=2,
+            use_threads=True,
+        )
+
         try:
-            with open(local_path, "rb") as source:
-                with s3.open_output_stream(s3_path) as dest:
-                    dest.write(source.read())
-
+            s3_client.upload_file(
+                str(local_path),
+                bucket,
+                s3_key,
+                Config=transfer_config,
+            )
             logger.info("Upload to Bronze Layer successful")
         except Exception as e:
-            logger.warning(f"Error uploading data to RustFS: {e}")
+            logger.error(f"Error uploading data to RustFS: {e}")
+            raise

@@ -10,7 +10,9 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from pyarrow import fs
+import boto3
+from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from sepa_pipeline.config import SEPAConfig
 from sepa_pipeline.utils.logger import get_logger
@@ -148,49 +150,43 @@ class SEPAExtractor:
         """
         logger.info(f"Fetching Bronze Layer data for {target_date} from RustFS...")
 
-        # Initialize S3 Filesystem
-        s3 = fs.S3FileSystem(
-            endpoint_override=config.rustfs_endpoint,
-            access_key=config.rustfs_access_key,
-            secret_key=config.rustfs_secret_key,
-            scheme="http",
-            region="us-east-1",
+        s3_client = boto3.client(
+            "s3",
+            endpoint_url=config.rustfs_endpoint,
+            aws_access_key_id=config.rustfs_access_key,
+            aws_secret_access_key=config.rustfs_secret_key,
+            region_name=config.rustfs_region,
+            config=Config(retries={"max_attempts": 5, "mode": "adaptive"}),
         )
 
-        # Construct S3 Path
-        # The stored file is usually: sepa_precios_YYYY-MM-DD.zip
-        # Path: bucket/bronze/raw/year=YYYY/month=MM/day=DD/filename.zip
-
         filename = f"sepa_precios_{target_date.strftime('%Y-%m-%d')}.zip"
-        s3_path = (
-            f"{config.rustfs_bucket}/bronze/raw/"
+        s3_key = (
+            f"bronze/raw/"
             f"year={target_date.year}/"
             f"month={target_date.month:02d}/"
             f"day={target_date.day:02d}/"
             f"{filename}"
         )
+        bucket = config.rustfs_bucket or "sepa-lakehouse"
 
-        # Check if file exists using get_file_info logic
-        # Note: s3.get_file_info returns a FileInfo object. type == FileType.NotFound if missing.
-        file_info = s3.get_file_info(s3_path)
-        if file_info.type == fs.FileType.NotFound:
-            logger.warning(
-                f"Data not found in Bronze Layer for {target_date} (Path: {s3_path})"
-            )
-            return None
+        try:
+            s3_client.head_object(Bucket=bucket, Key=s3_key)
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code")
+            if error_code in ("404", "NoSuchKey", "NotFound"):
+                logger.warning(
+                    f"Data not found in Bronze Layer for {target_date} (Path: s3://{bucket}/{s3_key})"
+                )
+                return None
+            raise
 
-        # Local Temp Path
-        # Use configured temp directory (defaults to /tmp, but can be local)
         temp_dir = config.temp_dir / f"sepa_bronze_{target_date}"
         temp_dir.mkdir(parents=True, exist_ok=True)
         local_zip_path = temp_dir / filename
 
-        logger.info(f"Downloading s3://{s3_path} -> {local_zip_path}")
+        logger.info(f"Downloading s3://{bucket}/{s3_key} -> {local_zip_path}")
         try:
-            # Manually stream from S3 to local file to avoid API issues with copy_file
-            with s3.open_input_stream(s3_path) as source:
-                with open(local_zip_path, "wb") as dest:
-                    dest.write(source.read())
+            s3_client.download_file(bucket, s3_key, str(local_zip_path))
         except Exception as e:
             logger.error(f"Failed to download from Bronze: {e}")
             raise

@@ -203,6 +203,7 @@ class TestSepaScraper:
                 patch.object(
                     scraper, "_download_data", return_value=True
                 ) as mock_download,
+                patch.object(scraper, "upload_to_bronze") as mock_upload,
             ):
                 result = await scraper.hurtar_datos()
 
@@ -210,6 +211,7 @@ class TestSepaScraper:
                 mock_connect.assert_called_once()
                 mock_parse.assert_called_once_with(mock_httpx_response)
                 mock_download.assert_called_once()
+                mock_upload.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_hurtar_datos_connection_failure(self, sample_url, sample_data_dir):
@@ -352,6 +354,7 @@ class TestSepaScraper:
                 patch.object(
                     scraper, "_download_data", return_value=True
                 ) as mock_download,
+                patch.object(scraper, "upload_to_bronze") as mock_upload,
             ):
                 result = await scraper.hurtar_datos(min_file_size_mb=150)
 
@@ -360,6 +363,79 @@ class TestSepaScraper:
                 mock_download.assert_called_once_with(
                     "https://example.com/sepa_jueves.zip", 150
                 )
+                mock_upload.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_hurtar_datos_upload_failure_returns_false(
+        self, sample_url, sample_data_dir, mock_httpx_response
+    ):
+        """Test that failure in upload_to_bronze causes hurtar_datos to return False."""
+        async with SepaScraper(
+            url=sample_url, data_dir=str(sample_data_dir)
+        ) as scraper:
+            with (
+                patch.object(
+                    scraper, "_connect_to_source", return_value=mock_httpx_response
+                ),
+                patch.object(
+                    scraper,
+                    "_parse_html",
+                    return_value="https://example.com/sepa_jueves.zip",
+                ),
+                patch.object(scraper, "_download_data", return_value=True),
+                patch.object(
+                    scraper,
+                    "upload_to_bronze",
+                    side_effect=Exception("S3 Upload Failed"),
+                ),
+            ):
+                result = await scraper.hurtar_datos()
+                assert result is False
+
+    @pytest.mark.asyncio
+    async def test_upload_to_bronze_boto3_success(self, sample_url, sample_data_dir):
+        """Test upload_to_bronze delegates to boto3 upload_file with TransferConfig."""
+        async with SepaScraper(
+            url=sample_url, data_dir=str(sample_data_dir), target_date="2026-08-25"
+        ) as scraper:
+            local_file = sample_data_dir / "sepa_precios_2026-08-25.zip"
+            local_file.write_bytes(b"dummy zip content")
+
+            with patch("boto3.client") as mock_boto:
+                mock_s3 = Mock()
+                mock_boto.return_value = mock_s3
+
+                scraper.upload_to_bronze(local_file)
+
+                mock_boto.assert_called_once()
+                mock_s3.upload_file.assert_called_once()
+                call_args = mock_s3.upload_file.call_args
+                assert call_args[0][0] == str(local_file)
+                assert call_args[0][1] == "sepa-lakehouse"
+                assert (
+                    call_args[0][2]
+                    == "bronze/raw/year=2026/month=08/day=25/sepa_precios_2026-08-25.zip"
+                )
+                assert "Config" in call_args[1]
+
+    @pytest.mark.asyncio
+    async def test_upload_to_bronze_boto3_failure_raises(
+        self, sample_url, sample_data_dir
+    ):
+        """Test upload_to_bronze raises when boto3 upload_file fails."""
+        async with SepaScraper(
+            url=sample_url, data_dir=str(sample_data_dir), target_date="2026-08-25"
+        ) as scraper:
+            local_file = sample_data_dir / "sepa_precios_2026-08-25.zip"
+            local_file.write_bytes(b"dummy zip content")
+
+            with patch("boto3.client") as mock_boto:
+                mock_s3 = Mock()
+                mock_s3.upload_file.side_effect = RuntimeError("Connection timeout")
+                mock_boto.return_value = mock_s3
+
+                with pytest.raises(RuntimeError, match="Connection timeout"):
+                    scraper.upload_to_bronze(local_file)
 
     @pytest.mark.asyncio
     async def test_validate_zip_date_consensus_valid(self, sample_url, sample_data_dir):
