@@ -23,9 +23,11 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Dict, Iterator, List
 
+import boto3
 import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
+from botocore.config import Config
 from pyarrow import fs
 
 from sepa_pipeline.config import SEPAConfig
@@ -37,7 +39,7 @@ logger = get_logger(__name__)
 TABLE_TYPES = ("comercio", "sucursales", "productos")
 STAGING_DIR = ".staging"
 SUCCESS_MARKER = "_SUCCESS"
-# Chunk size for staging → final stream copy (avoids pyarrow copy_file quirks).
+# Chunk size for staging → final stream copy fallback on local test filesystems.
 _COPY_CHUNK_BYTES = 8 * 1024 * 1024
 
 
@@ -51,16 +53,34 @@ class ParquetLoader:
         self,
         config: SEPAConfig,
         filesystem: fs.FileSystem | None = None,
+        s3_client: Any | None = None,
     ):
         self.config = config
         # Injected filesystem is used in tests (LocalFileSystem / SubTreeFileSystem).
         self._s3: fs.FileSystem = filesystem or fs.S3FileSystem(
-            endpoint_override=config.rustfs_endpoint,
-            access_key=config.rustfs_access_key,
-            secret_key=config.rustfs_secret_key,
+            endpoint_override=getattr(config, "rustfs_endpoint", None),
+            access_key=getattr(config, "rustfs_access_key", None),
+            secret_key=getattr(config, "rustfs_secret_key", None),
             scheme="http",
-            region="us-east-1",
+            region=getattr(config, "rustfs_region", "us-east-1"),
         )
+        if s3_client is not None:
+            self._s3_client = s3_client
+        elif filesystem is None and isinstance(self._s3, fs.S3FileSystem):
+            self._s3_client = boto3.client(
+                "s3",
+                endpoint_url=getattr(config, "rustfs_endpoint", None),
+                aws_access_key_id=getattr(config, "rustfs_access_key", None),
+                aws_secret_access_key=getattr(config, "rustfs_secret_key", None),
+                region_name=getattr(config, "rustfs_region", "us-east-1"),
+                config=Config(
+                    retries={"max_attempts": 5, "mode": "adaptive"},
+                    connect_timeout=15,
+                    read_timeout=60,
+                ),
+            )
+        else:
+            self._s3_client = None
 
     def _parquet_prefix(self, fecha_vigencia: date) -> str:
         return (
@@ -101,8 +121,29 @@ class ParquetLoader:
         self._ensure_parent(path)
         return self._s3.open_output_stream(path)
 
+    @staticmethod
+    def _split_bucket_key(path: str) -> tuple[str, str]:
+        bucket, _, key = path.partition("/")
+        return bucket, key
+
     def _copy_object(self, src: str, dst: str) -> None:
-        """Stream-copy one object (works on S3 and LocalFileSystem)."""
+        """
+        Copy one object from src to dst.
+
+        Uses S3 server-side copy when operating against S3/RustFS to avoid
+        client-side stream/multipart upload overhead, falling back to stream copy
+        for injected test filesystems (e.g. LocalFileSystem).
+        """
+        if self._s3_client is not None:
+            src_bucket, src_key = self._split_bucket_key(src)
+            dst_bucket, dst_key = self._split_bucket_key(dst)
+            self._s3_client.copy_object(
+                Bucket=dst_bucket,
+                CopySource={"Bucket": src_bucket, "Key": src_key},
+                Key=dst_key,
+            )
+            return
+
         with self._s3.open_input_stream(src) as inp:
             with self._open_output(dst) as out:
                 while True:
