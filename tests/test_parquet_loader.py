@@ -28,7 +28,13 @@ def local_fs(tmp_path: Path) -> fs.SubTreeFileSystem:
 
 @pytest.fixture
 def config() -> SimpleNamespace:
-    return SimpleNamespace(rustfs_bucket="sepa-lakehouse")
+    return SimpleNamespace(
+        rustfs_bucket="sepa-lakehouse",
+        rustfs_endpoint="http://localhost:9000",
+        rustfs_access_key="rustfsadmin",
+        rustfs_secret_key="rustfsadmin",
+        rustfs_region="us-east-1",
+    )
 
 
 @pytest.fixture
@@ -343,3 +349,48 @@ def test_cli_force_rebuild_bronze_flag() -> None:
         args = parse_args()
     assert args.force_rebuild_bronze is True
     assert args.date == "2026-04-04"
+
+
+def test_split_bucket_key() -> None:
+    bucket, key = ParquetLoader._split_bucket_key(
+        "sepa-lakehouse/bronze/parquet/year=2026/month=08/day=29/productos.parquet"
+    )
+    assert bucket == "sepa-lakehouse"
+    assert key == "bronze/parquet/year=2026/month=08/day=29/productos.parquet"
+
+
+def test_copy_object_s3_server_side(config: SimpleNamespace) -> None:
+    """Verify that _copy_object delegates to boto3 copy_object for S3."""
+    from unittest.mock import Mock
+
+    mock_s3 = Mock()
+    loader = ParquetLoader(config, filesystem=None, s3_client=mock_s3)  # type: ignore[arg-type]
+
+    src = "sepa-lakehouse/bronze/parquet/year=2026/month=08/day=29/.staging/productos.parquet"
+    dst = "sepa-lakehouse/bronze/parquet/year=2026/month=08/day=29/productos.parquet"
+
+    loader._copy_object(src, dst)
+
+    mock_s3.copy_object.assert_called_once_with(
+        Bucket="sepa-lakehouse",
+        CopySource={
+            "Bucket": "sepa-lakehouse",
+            "Key": "bronze/parquet/year=2026/month=08/day=29/.staging/productos.parquet",
+        },
+        Key="bronze/parquet/year=2026/month=08/day=29/productos.parquet",
+    )
+
+
+def test_copy_object_s3_error_propagation(config: SimpleNamespace) -> None:
+    """Verify that S3 copy_object errors bubble up cleanly."""
+    from unittest.mock import Mock
+
+    mock_s3 = Mock()
+    mock_s3.copy_object.side_effect = RuntimeError("AWS Error SERVICE_UNAVAILABLE")
+    loader = ParquetLoader(config, filesystem=None, s3_client=mock_s3)  # type: ignore[arg-type]
+
+    src = "sepa-lakehouse/bronze/parquet/year=2026/month=08/day=29/.staging/productos.parquet"
+    dst = "sepa-lakehouse/bronze/parquet/year=2026/month=08/day=29/productos.parquet"
+
+    with pytest.raises(RuntimeError, match="AWS Error SERVICE_UNAVAILABLE"):
+        loader._copy_object(src, dst)
