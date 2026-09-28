@@ -16,7 +16,11 @@ from dotenv import load_dotenv
 # `from sepa_pipeline.config import get_schema_dict` keep working.
 from sepa_pipeline.schema import get_schema_dict  # noqa: F401
 
-load_dotenv()
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if (_PROJECT_ROOT / ".env").is_file():
+    load_dotenv(_PROJECT_ROOT / ".env")
+else:
+    load_dotenv()
 
 
 class SEPAConfig:
@@ -47,6 +51,15 @@ class SEPAConfig:
         self.polaris_client_secret: str | None = os.getenv(
             "POLARIS_CLIENT_SECRET", "polaris"
         )
+
+        # PyIceberg configuration safeguards
+        if (
+            "PYICEBERG_HOME" not in os.environ
+            and (_PROJECT_ROOT / ".pyiceberg.yaml").is_file()
+        ):
+            os.environ["PYICEBERG_HOME"] = str(_PROJECT_ROOT)
+        if "PYICEBERG_CATALOG__DEFAULT__URI" not in os.environ and self.polaris_uri:
+            os.environ["PYICEBERG_CATALOG__DEFAULT__URI"] = self.polaris_uri
 
         self._validate()
 

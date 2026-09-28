@@ -1,3 +1,4 @@
+from lakehouse_mcp import config  # noqa: F401
 from pyiceberg.catalog import load_catalog
 from pyiceberg.table import Table
 

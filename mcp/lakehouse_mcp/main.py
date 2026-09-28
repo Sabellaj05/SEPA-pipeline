@@ -1,3 +1,4 @@
+from lakehouse_mcp import config  # noqa: F401
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI

@@ -1,3 +1,4 @@
+from lakehouse_mcp import config  # noqa: F401
 import asyncio
 import logging
 

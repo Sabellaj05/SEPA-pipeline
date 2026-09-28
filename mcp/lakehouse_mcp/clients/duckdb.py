@@ -2,8 +2,8 @@ import logging
 
 import duckdb
 
-from lakehouse_mcp.clients.iceberg import get_catalog
 from lakehouse_mcp.config import config
+from lakehouse_mcp.clients.iceberg import get_catalog
 
 logger = logging.getLogger(__name__)
 
