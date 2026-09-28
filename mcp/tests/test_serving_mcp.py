@@ -1,25 +1,39 @@
 import asyncio
 from typing import Any
 
-import polars as pl
 import pytest
 
 
-class _FakeResult:
-    def pl(self) -> pl.DataFrame:
-        return pl.DataFrame({"ok": [True]})
+class _FakeCursor:
+    def __init__(self, executed: list[tuple[str, Any]]) -> None:
+        self.executed = executed
+
+    def execute(self, sql: str, params: Any = None) -> None:
+        self.executed.append((sql, params))
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id_producto": "123",
+                "descripcion": "Fideos Tallarines",
+                "precio_lista": 1000.0,
+                "score": 0.8,
+            }
+        ]
+
+    def close(self) -> None:
+        pass
 
 
 class _FakeConnection:
     def __init__(self) -> None:
-        self.executed: list[tuple[str, list[Any]]] = []
+        self.executed: list[tuple[str, Any]] = []
 
-    def execute(self, sql: str, params: list[Any]) -> _FakeResult:
-        self.executed.append((sql, params))
-        return _FakeResult()
+    def cursor(self, *args: Any, **kwargs: Any) -> _FakeCursor:
+        return _FakeCursor(self.executed)
 
 
-def _tool_names(mcp) -> list[str]:
+def _tool_names(mcp: Any) -> list[str]:
     return [t.name for t in asyncio.run(mcp.list_tools())]
 
 
@@ -41,15 +55,17 @@ def test_search_products_builds_fts_query(monkeypatch: Any) -> None:
     from serving_mcp.tools import search
 
     conn = _FakeConnection()
-    monkeypatch.setattr(search, "get_serving_connection", lambda: conn)
+    monkeypatch.setattr(search, "get_pg_connection", lambda: conn)
+    monkeypatch.setattr(search, "_get_typesafe_client", lambda: None)
 
-    result = search.search_products("fideos", limit=5)
+    result = search.search_products("fideos", limit=5, use_jev=False)
 
-    assert result == [{"ok": True}]
+    assert len(result) == 1
+    assert result[0]["descripcion"] == "Fideos Tallarines"
     sql, params = conn.executed[0]
-    assert "fts_main_current_prices.match_bm25" in sql
-    assert "FROM current_prices" in sql
-    assert params == ["fideos", 5]
+    assert "serving.products" in sql
+    assert "similarity" in sql
+    assert params[0] == "fideos"
 
 
 def test_search_products_propagates_missing_db(monkeypatch: Any) -> None:
@@ -58,7 +74,7 @@ def test_search_products_propagates_missing_db(monkeypatch: Any) -> None:
     def boom() -> None:
         raise RuntimeError("serving db missing")
 
-    monkeypatch.setattr(search, "get_serving_connection", boom)
+    monkeypatch.setattr(search, "get_pg_connection", boom)
 
     with pytest.raises(RuntimeError, match="serving db missing"):
         search.search_products("fideos")

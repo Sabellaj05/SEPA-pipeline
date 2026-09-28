@@ -1,44 +1,54 @@
 import logging
+import os
 from pathlib import Path
 
-import duckdb
+import psycopg2
+from dotenv import find_dotenv, load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+env_path = find_dotenv()
+if env_path and Path(env_path).parent.resolve() == PROJECT_ROOT.resolve():
+    load_dotenv(env_path)
+elif (PROJECT_ROOT / ".env").is_file():
+    load_dotenv(PROJECT_ROOT / ".env")
+else:
+    load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-_serving_conn = None
+_pg_conn = None
 
 
-def _resolve_db_path() -> Path:
-    """Resolve the serving database, preferring mcp/serving_sample.duckdb."""
-    db_path = Path(__file__).resolve().parent.parent.parent / "serving_sample.duckdb"
-    if not db_path.exists():
-        cwd_path = Path.cwd() / "serving_sample.duckdb"
-        if cwd_path.exists():
-            db_path = cwd_path
-    return db_path
-
-
-def get_serving_connection() -> duckdb.DuckDBPyConnection:
-    global _serving_conn
-    if _serving_conn is None:
-        db_path = _resolve_db_path()
-        if not db_path.exists():
-            raise RuntimeError(
-                f"Serving database not found at {db_path}. "
-                "Please run: python -m serving_mcp.utils.build_serving_db"
-            )
+def get_pg_connection() -> psycopg2.extensions.connection:
+    """Get or establish connection to the PostgreSQL serving database."""
+    global _pg_conn
+    if _pg_conn is None or _pg_conn.closed:
+        host = os.getenv("SERVING_PG_HOST", os.getenv("POSTGRES_HOST", "localhost"))
+        port = int(os.getenv("SERVING_PG_PORT", os.getenv("POSTGRES_PORT", 5432)))
+        user = os.getenv("SERVING_PG_USER", "polaris")
+        password = os.getenv("SERVING_PG_PASSWORD", "polaris")
+        dbname = os.getenv("SERVING_PG_DB", "polaris")
         try:
-            _serving_conn = duckdb.connect(str(db_path), read_only=True)
-            _serving_conn.execute("INSTALL fts; LOAD fts;")
-            logger.info(f"Connected to serving database at {db_path}")
+            _pg_conn = psycopg2.connect(
+                host=host, port=port, user=user, password=password, dbname=dbname
+            )
+
+            logger.info(
+                f"Connected to PostgreSQL serving database at {host}:{port}/{dbname}"
+            )
         except Exception as e:
-            logger.error(f"Failed to connect to serving DB: {e}")
+            logger.error(f"Failed to connect to PostgreSQL serving database: {e}")
             raise
-    return _serving_conn
+    return _pg_conn
 
 
 def close_serving_connection() -> None:
-    global _serving_conn
-    if _serving_conn:
-        _serving_conn.close()
-        _serving_conn = None
+    """Close active database connections."""
+    global _pg_conn
+    if _pg_conn and not _pg_conn.closed:
+        _pg_conn.close()
+        _pg_conn = None
+
+
+# Alias for backward compatibility
+get_serving_connection = get_pg_connection
