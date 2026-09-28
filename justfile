@@ -85,3 +85,27 @@ verify *args="":
 # Run dbt commands (defaults to `dbt run`)
 dbt *args="run":
     uv run dbt {{args}} --project-dir dbt/sepa_analytics --profiles-dir dbt
+
+# ---------------------------------------------------------------------------
+# Agent & MCP Server
+# ---------------------------------------------------------------------------
+
+# Run the agent api endpoint
+agent:
+  uv run sepa-api
+
+# Run the MCP server
+mcp:
+  uv run uvicorn lakehouse_mcp.main:app --host 0.0.0.0 --port 19121
+
+# Run the Serving MCP server
+serve:
+  uv run uvicorn serving_mcp.main:app --host 0.0.0.0 --port 19122
+
+# Run Langfuse stack
+trace:
+  docker compose --env-file .env.langfuse -f langfuse-compose.yml up -d
+
+# Stop Langfuse stack
+trace-stop:
+  docker compose -f langfuse-compose.yml stop
