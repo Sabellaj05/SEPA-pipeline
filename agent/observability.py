@@ -2,7 +2,6 @@ import logging
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,15 @@ def load_langfuse_environment(env_file: str | os.PathLike[str] | None = None) ->
         env_path = Path(env_file)
 
     if env_path.exists():
-        load_dotenv(env_path, override=False)
+        from dotenv import dotenv_values
+
+        lf_vars = dotenv_values(env_path)
+        for k, v in lf_vars.items():
+            if v is not None and (
+                k.startswith("LANGFUSE_") or k in {"NEXTAUTH_URL", "NEXTAUTH_SECRET"}
+            ):
+                if k not in os.environ:
+                    os.environ[k] = v
 
     defaults = {
         "LANGFUSE_BASE_URL": os.getenv("NEXTAUTH_URL"),
