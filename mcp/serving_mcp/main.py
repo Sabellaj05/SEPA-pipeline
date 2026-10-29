@@ -16,7 +16,7 @@ streamable_app = mcp.streamable_http_app()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    logger.info("Warming up serving DuckDB connection...")
+    logger.info("Warming up PostgreSQL serving connection...")
     try:
         get_serving_connection()
     except Exception as exc:
@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with streamable_app.router.lifespan_context(streamable_app):
             yield
     finally:
-        logger.info("Closing serving DuckDB connection...")
+        logger.info("Closing PostgreSQL serving connection...")
         close_serving_connection()
 
 

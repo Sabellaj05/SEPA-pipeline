@@ -1,3 +1,4 @@
+import pytest
 from google.adk.events.event import Event
 from google.genai import types
 
@@ -75,3 +76,42 @@ def test_formatter_invalid_shopping_list_becomes_error() -> None:
 
     assert payload["type"] == "error"
     assert "invalid ShoppingList JSON" in payload["content"]
+
+
+def test_is_local_enabled_toggle(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent.sepa_agent import is_local_enabled
+
+    monkeypatch.setenv("SEPA_AGENT_LOCAL_MODEL", "false")
+    assert is_local_enabled() is False
+
+    monkeypatch.setenv("SEPA_AGENT_LOCAL_MODEL", "true")
+    assert is_local_enabled() is True
+
+    monkeypatch.setenv("SEPA_AGENT_LOCAL_MODEL", "0")
+    assert is_local_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_general_conversation_stream() -> None:
+    from unittest.mock import AsyncMock, patch
+    from agent.sepa_agent import arun_prompt_stream
+
+    with (
+        patch(
+            "agent.sepa_agent.classify_intent",
+            AsyncMock(return_value=("general_conversation", 1.0)),
+        ),
+        patch(
+            "agent.sepa_agent._run_conversational_agent",
+            AsyncMock(return_value="¡Hola! ¿En qué te puedo ayudar?"),
+        ),
+    ):
+        events = []
+        async for ev in arun_prompt_stream("hola que tal, en que me podes ayudar?"):
+            events.append(ev)
+        types = [e["type"] for e in events]
+        assert "progress" in types
+        assert "final" in types
+        final_ev = [e for e in events if e["type"] == "final"][0]
+        assert final_ev["content"] == "¡Hola! ¿En qué te puedo ayudar?"
+        assert final_ev.get("data") is None

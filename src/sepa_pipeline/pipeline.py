@@ -37,15 +37,15 @@ from sepa_pipeline.schema import (
     to_silver_productos,
     to_silver_sucursales,
 )
-from sepa_pipeline.scraper import SepaScraper
+from sepa_pipeline.scraper import SEPAScraper
 from sepa_pipeline.utils.fecha import Fecha
 from sepa_pipeline.utils.logger import get_logger
 from sepa_pipeline.validator import SEPAValidator
 
 logger = get_logger(__name__)
 
-SCRAPER_URL = "https://datos.produccion.gob.ar/dataset/sepa-precios"
-SCRAPER_DATA_DIR = "data"
+# SCRAPER_URL: str = str(os.environ["SCRAPER_URL"])
+# SCRAPER_DATA_DIR: Path = Path(os.environ["SCRAPER_DATA_DIR"])
 
 
 # ---------------------------------------------------------------------------
@@ -53,12 +53,12 @@ SCRAPER_DATA_DIR = "data"
 # ---------------------------------------------------------------------------
 
 
-async def _scrape_date(target_date: date) -> bool:
+async def _scrape_date(target_date: date, config: SEPAConfig) -> bool:
     """Run the scraper for a single date. Returns True on success."""
     logger.info(f"Scraping data for {target_date}")
-    async with SepaScraper(
-        url=SCRAPER_URL,
-        data_dir=SCRAPER_DATA_DIR,
+    async with SEPAScraper(
+        url=config.scraper_url,
+        data_dir=config.raw_data_dir,
         target_date=target_date,
     ) as scraper:
         return await scraper.hurtar_datos()
@@ -152,7 +152,7 @@ def process_daily_data(
         # Need raw ZIP → check if it exists, scrape if not
         if not _raw_zip_exists(config, target_date):
             logger.info(f"No bronze data for {target_date}, scraping...")
-            success = asyncio.run(_scrape_date(target_date))
+            success = asyncio.run(_scrape_date(target_date, config))
             if not success:
                 logger.warning(
                     f"Scraping failed for {target_date}, skipping pipeline execution"
@@ -396,7 +396,7 @@ def main() -> int:
                 f"Scrape-only mode | Dates: {dates[0]} to {dates[-1]} ({len(dates)} day(s))"
             )
             for target_date in dates:
-                success = asyncio.run(_scrape_date(target_date))
+                success = asyncio.run(_scrape_date(target_date, config))
                 if success:
                     logger.info(f"Scrape successful for {target_date}")
                 else:

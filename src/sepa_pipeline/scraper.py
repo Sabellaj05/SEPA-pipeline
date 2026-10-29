@@ -54,10 +54,10 @@ def _log_retry_attempt(retry_state: RetryCallState) -> None:
     )
 
 
-class SepaScraper:
+class SEPAScraper:
     """Class to scrape SEPA precios."""
 
-    def __init__(self, url: str, data_dir: str, target_date: str | date | None = None):
+    def __init__(self, url: str, data_dir: Path, target_date: str | date | None = None):
         """
         Initializes the Scraper.
 
@@ -103,7 +103,7 @@ class SepaScraper:
         """Get the HTTP client, error if not initialized"""
         if self._client is None:
             raise RuntimeError(
-                "Client not initialized, use 'async with SepaScraper(...)' pattern"
+                "Client not initialized, use 'async with SEPAScraper(...)' pattern"
             )
         return self._client
 
