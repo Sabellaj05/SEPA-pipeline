@@ -1,19 +1,19 @@
-"""Tests for the SepaScraper class."""
+"""Tests for the SEPAScraper class."""
 
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from sepa_pipeline.scraper import SepaScraper
+from sepa_pipeline.scraper import SEPAScraper
 
 
-class TestSepaScraper:
-    """Test cases for SepaScraper class."""
+class TestSEPAScraper:
+    """Test cases for SEPAScraper class."""
 
     @pytest.mark.asyncio
     async def test_scraper_initialization(self, sample_url, sample_data_dir):
-        """Test that SepaScraper initializes correctly."""
-        async with SepaScraper(
+        """Test that SEPAScraper initializes correctly."""
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             assert scraper.url == sample_url
@@ -23,8 +23,8 @@ class TestSepaScraper:
 
     @pytest.mark.asyncio
     async def test_scraper_initialization_with_path(self, sample_url, sample_data_dir):
-        """Test that SepaScraper works with Path objects."""
-        async with SepaScraper(url=sample_url, data_dir=sample_data_dir) as scraper:
+        """Test that SEPAScraper works with Path objects."""
+        async with SEPAScraper(url=sample_url, data_dir=sample_data_dir) as scraper:
             assert scraper.data_dir == sample_data_dir
 
     @pytest.mark.asyncio
@@ -32,7 +32,7 @@ class TestSepaScraper:
         self, sample_url, sample_data_dir, mock_httpx_response
     ):
         """Test successful connection to source."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             with patch.object(
@@ -49,7 +49,7 @@ class TestSepaScraper:
     @pytest.mark.asyncio
     async def test_connect_to_source_failure(self, sample_url, sample_data_dir):
         """Test connection failure handling."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             with patch.object(
@@ -73,7 +73,7 @@ class TestSepaScraper:
             mock_fecha_instance.hoy = "2024-01-01"
             mock_fecha_class.return_value = mock_fecha_instance
 
-            async with SepaScraper(
+            async with SEPAScraper(
                 url=sample_url, data_dir=str(sample_data_dir)
             ) as scraper:
                 download_link = scraper._parse_html(mock_httpx_response)
@@ -90,7 +90,7 @@ class TestSepaScraper:
             mock_fecha_instance.hoy = "2024-01-03"  # does not match 2024-01-01 or 02
             mock_fecha_class.return_value = mock_fecha_instance
 
-            async with SepaScraper(
+            async with SEPAScraper(
                 url=sample_url, data_dir=str(sample_data_dir)
             ) as scraper:
                 # Create a mock response with no matching day-of-week files
@@ -114,7 +114,7 @@ class TestSepaScraper:
     @pytest.mark.asyncio
     async def test_parse_html_no_links(self, sample_url, sample_data_dir):
         """Test HTML parsing when no links are found."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             # Create a mock response with no links
@@ -128,7 +128,7 @@ class TestSepaScraper:
     @pytest.mark.asyncio
     async def test_download_data_success(self, sample_url, sample_data_dir):
         """Test successful data download with valid file size."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             download_link = "https://example.com/test.zip"
@@ -177,7 +177,7 @@ class TestSepaScraper:
     @pytest.mark.asyncio
     async def test_download_data_no_link(self, sample_url, sample_data_dir):
         """Test download with no link provided."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             result = await scraper._download_data("")
@@ -188,7 +188,7 @@ class TestSepaScraper:
         self, sample_url, sample_data_dir, mock_httpx_response
     ):
         """Test successful complete scraping process."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             with (
@@ -216,7 +216,7 @@ class TestSepaScraper:
     @pytest.mark.asyncio
     async def test_hurtar_datos_connection_failure(self, sample_url, sample_data_dir):
         """Test scraping process when connection fails."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             with patch.object(scraper, "_connect_to_source", return_value=None):
@@ -228,7 +228,7 @@ class TestSepaScraper:
         self, sample_url, sample_data_dir, mock_httpx_response
     ):
         """Test scraping process when no download link is found."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             with (
@@ -245,7 +245,7 @@ class TestSepaScraper:
         self, sample_url, sample_data_dir
     ):
         """Test successful download with valid file size."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             download_link = "https://example.com/test.zip"
@@ -293,7 +293,7 @@ class TestSepaScraper:
         self, sample_url, sample_data_dir
     ):
         """Test download failure when file size is too small."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             download_link = "https://example.com/test.zip"
@@ -339,7 +339,7 @@ class TestSepaScraper:
         self, sample_url, sample_data_dir, mock_httpx_response
     ):
         """Test complete scraping process with file size validation."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             with (
@@ -370,7 +370,7 @@ class TestSepaScraper:
         self, sample_url, sample_data_dir, mock_httpx_response
     ):
         """Test that failure in upload_to_bronze causes hurtar_datos to return False."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             with (
@@ -395,7 +395,7 @@ class TestSepaScraper:
     @pytest.mark.asyncio
     async def test_upload_to_bronze_boto3_success(self, sample_url, sample_data_dir):
         """Test upload_to_bronze delegates to boto3 upload_file with TransferConfig."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir), target_date="2026-08-25"
         ) as scraper:
             local_file = sample_data_dir / "sepa_precios_2026-08-25.zip"
@@ -423,7 +423,7 @@ class TestSepaScraper:
         self, sample_url, sample_data_dir
     ):
         """Test upload_to_bronze raises when boto3 upload_file fails."""
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir), target_date="2026-08-25"
         ) as scraper:
             local_file = sample_data_dir / "sepa_precios_2026-08-25.zip"
@@ -442,7 +442,7 @@ class TestSepaScraper:
         """Test consensus logic with a predominantly valid ZIP."""
         from .factories import make_sepa_zip
 
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir), target_date="2026-01-15"
         ) as scraper:
             zip_bytes = make_sepa_zip(
@@ -459,7 +459,7 @@ class TestSepaScraper:
         """Test consensus logic with a predominantly stale ZIP."""
         from .factories import make_sepa_zip
 
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir), target_date="2026-01-15"
         ) as scraper:
             # Build a ZIP where the majority of nested ZIPs have stale dates
@@ -478,7 +478,7 @@ class TestSepaScraper:
     ):
         """Test that KeyboardInterrupt during download cleans up partial file and re-raises."""
 
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             download_link = "https://example.com/test.zip"
@@ -515,7 +515,7 @@ class TestSepaScraper:
         """Test that httpx.RequestError during download cleans up and returns False."""
         import httpx
 
-        async with SepaScraper(
+        async with SEPAScraper(
             url=sample_url, data_dir=str(sample_data_dir)
         ) as scraper:
             download_link = "https://example.com/test.zip"
@@ -543,7 +543,7 @@ class TestSepaScraper:
             "sys.argv", ["pipeline.py", "--scrape-only", "--date", "2026-08-20"]
         )
 
-        def mock_scrape_date(target_date):
+        def mock_scrape_date(*args, **kwargs):
             raise KeyboardInterrupt()
 
         monkeypatch.setattr("sepa_pipeline.pipeline._scrape_date", mock_scrape_date)

@@ -152,6 +152,7 @@ Thumbs.db
 # Project specific
 logs/
 data/
+sepa-data/
 *.zip
 .agent/
 .pyiceberg.yaml

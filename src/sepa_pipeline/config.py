@@ -64,9 +64,14 @@ class SEPAConfig:
         self._validate()
 
         # Local directories
-        self.temp_dir: Path = Path(os.getenv("SEPA_TEMP_DIR", "/tmp"))
-        self.raw_data_dir: Path = Path("data")
-        self.archive_dir: Path = Path("data/archive")
+        self.temp_dir: Path = Path(os.getenv("SEPA_TEMP_DIR", "tmp"))
+        self.raw_data_dir: Path = Path(os.getenv("SEPA_DATA_DIR", "data"))
+        self.archive_dir: Path = Path(os.getenv("SEPA_ARCHIVE_DIR", "data/archive"))
+
+        # source data
+        self.scraper_url: str = os.getenv(
+            "SCRAPER_URL", "https://datos.produccion.gob.ar/dataset/sepa-precios"
+        )
 
     def _validate(self) -> None:
         # GCP is optional for local-only runs but required for BigQuery loader
